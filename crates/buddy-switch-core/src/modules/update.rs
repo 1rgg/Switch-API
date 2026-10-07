@@ -413,8 +413,8 @@ mod tests {
         assert_eq!(
             urls,
             vec![
-                "https://github.com/NextAgentX/trae-workbuddy-switch/releases/latest/download/latest.json",
-                "https://github.com/NextAgentX/trae-workbuddy-switch/releases/latest/download/latest-macos-aarch64.json",
+                "https://github.com/1rgg/Switch-API/releases/latest/download/latest.json",
+                "https://github.com/1rgg/Switch-API/releases/latest/download/latest-macos-aarch64.json",
             ]
         );
     }
@@ -425,9 +425,9 @@ mod tests {
         assert_eq!(
             urls,
             vec![
-                "https://github.com/NextAgentX/trae-workbuddy-switch/releases/latest/download/latest.json",
-                "https://github.com/NextAgentX/trae-workbuddy-switch/releases/latest/download/latest-windows-x86_64.json",
-                "https://github.com/NextAgentX/trae-workbuddy-switch/releases/latest/download/latest-macos-x86_64.json",
+                "https://github.com/1rgg/Switch-API/releases/latest/download/latest.json",
+                "https://github.com/1rgg/Switch-API/releases/latest/download/latest-windows-x86_64.json",
+                "https://github.com/1rgg/Switch-API/releases/latest/download/latest-macos-x86_64.json",
             ]
         );
     }
