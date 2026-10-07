@@ -57,7 +57,22 @@ pub const SOURCE_MISSING: &str = "missing";
 ///
 /// 序列化成 camelCase —— 与 Trae 分区既有的前端类型（`TraeEnvStatus` 等）同风格，
 /// 前端不需要为这一处单独做字段名转换。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+///
+/// ## 为什么**只有** `PartialEq`，没有 `Eq`
+///
+/// 本结构体带 `f64` 字段（`credits` / `discounted_credits`），而 `f64` 不实现
+/// `Eq`（`NaN != NaN`，`Eq` 要求**全序**）。derive `Eq` 会直接编译失败：
+/// ```text
+/// error[E0277]: the trait bound `f64: Eq` is not satisfied
+///    --> model_list.rs:117:5
+/// ```
+/// 这不是可以绕过的警告 —— `Option<f64>` 同样不满足 `Eq`。
+///
+/// ⇒ 只用 `PartialEq`。本类型的比较只用于测试断言与「清单变没变」的等值判断，
+/// 不参与 `HashMap` / `BTreeMap` 的键，**不需要**全序语义。
+/// 若将来真需要 `Eq`，正确做法是把倍率改成定点整数（如 `i32` 存千分之一），
+/// 而不是给 `f64` 手写一个假 `Eq` —— 那会让 `NaN == NaN` 成立，是更糟的坑。
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientModel {
     /// 模型标识（上游 `name`，如 `deepseek-v4.1-flash`）。空名条目会被丢弃。
@@ -131,7 +146,10 @@ pub struct ClientModel {
 ///
 /// 分组名**按产品线不同**（Trae Work 与 TraeCode 的取值集合完全不同），
 /// 故本模块原样透出、不做映射 —— 由调用方决定展示哪几组。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+///
+/// 同样**只有 `PartialEq`**：它含 [`ClientModel`]，而后者带 `f64` 倍率字段
+/// （见 `ClientModel` 的文档）。derive `Eq` 会连带编译失败。
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientModelGroup {
     pub function: String,
