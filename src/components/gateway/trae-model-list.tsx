@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { Cpu, Loader2, RefreshCw } from "lucide-react";
 
+import { CreditSortHeader } from "@/components/gateway/credit-sort-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DemoAction } from "@/components/demo-action";
 import { TraeVariantMark } from "@/components/product-marks";
 import * as api from "@/lib/api";
+import { nextCreditSort, sortByCredits, type CreditSortDirection } from "@/lib/credit-sort";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import type { TranslationKey } from "@/locales/zh";
 import type { Region, EffortCapabilityTable, ModelEffortCapability } from "@/lib/types";
 import type {
   TraeClientModel,
@@ -39,6 +42,23 @@ function programRegion(variant: TraeVariantId): Region {
       return "cn";
   }
 }
+
+/**
+ * 倍率列排序控件所需的文案键。
+ *
+ * 存**键**而不是文案：语言切换时整表要重渲染，把中文写进模块级常量会让切换失效。
+ *
+ * 与 WorkBuddy 侧传的是**另一套键**（`wbStats.gateway.*`），但语义逐条对应 ——
+ * 两个组件共用同一个 `CreditSortHeader`，只有词表命名空间不同。
+ */
+const CREDIT_SORT_LABELS = {
+  column: "trae.gateway.models.colCredits",
+  sortLabel: "trae.gateway.models.creditSort",
+  toAsc: "trae.gateway.models.creditSortAsc",
+  toDesc: "trae.gateway.models.creditSortDesc",
+  toNone: "trae.gateway.models.creditSortNone",
+  tip: "trae.gateway.models.creditSortTip",
+} as const satisfies Record<string, TranslationKey>;
 
 /**
  * Trae 模型清单 —— 读**客户端（上游下发）**的清单缓存。
@@ -108,6 +128,20 @@ function programRegion(variant: TraeVariantId): Region {
  * 实测 TraeWork 客户端 32 个模型里 **26 个有倍率**（0.06–1.83），
  * 没有的 6 个全是第三方 / 自定义路由条目。
  *
+ * ## 「积分倍率」列可排序（2026-10-07 新增）
+ *
+ * 列头是可点的按钮，三态循环：不排序 → 从低到高 → 从高到低 → 不排序，
+ * 与 WorkBuddy 侧**共用同一份**状态机 / 比较器（`lib/credit-sort.ts`）
+ * 与表头组件（`CreditSortHeader`）—— 两页的表要逐列对读，排序语义不能各写一套。
+ *
+ * 两个要点：
+ * - **不排序态必须保留**：上游原始顺序本身带信息（客户端按 function 下发），
+ *   点过就回不去等于把「别排」这个选项删掉；
+ * - **无倍率的行永远沉底**（两个方向都是）：它们是「没这个口径」，不是「最便宜」。
+ *
+ * ⚠️ 排序**在各分组内独立进行**，绝不跨分组重排 —— 分组是「能不能调」的
+ * 结构性依据，打散了就把这条信息从分组标题里弄丢了。
+ *
  * ## 「网关不提供」的行：默认**保留**（压暗 + 记号），可一键隐藏
  *
  * 清单来自客户端缓存，是用户**唯一**一份「上游到底下发了什么」的现场证据。
@@ -166,6 +200,13 @@ export function TraeModelList({
    * （且复位到「看得见全部」这个更保守的一侧）。
    */
   const [onlyServed, setOnlyServed] = useState(false);
+  /**
+   * 「积分倍率」列的排序方向（三态：无 / 升 / 降）。
+   *
+   * 与 `onlyServed` 同属「本卡片的展示参数」：不落 store / 不落 URL，
+   * 切页回来复位到「不排序」（还原上游原始顺序这个更保守的一侧）。
+   */
+  const [creditSort, setCreditSort] = useState<CreditSortDirection>(null);
   const active = sources.find((source) => source.variant === picked) ?? sources[0] ?? null;
   const data = active?.data ?? null;
   /** 当前程序位的**网关对外清单** id 集合（见 `TraeModelSource.gatewayNames`）。 */
@@ -221,18 +262,30 @@ export function TraeModelList({
   /**
    * 实际渲染用的分组。
    *
+   * 过滤（`onlyServed`）与排序（`creditSort`）**都在这里一次做完**，
+   * 且**排序在各分组内独立进行** —— 分组是「能不能调」的**结构性**依据
+   * （见模块头），把模型按倍率抽出来跨分组重排会让「这条属于哪个 function」
+   * 从分组标题掉进某一列，而那列在参考页上并不存在。
+   *
    * 只在开关打开时过滤；`servableNames === null`（网关清单没取到）时**不过滤** ——
    * 判据缺失就把行删掉，等于把「没读到」当成「不提供」，那是凭空造结论。
+   *
+   * 排序前先过滤、后排序：顺序反过来只是多排几个马上被丢掉的行，结果相同，
+   * 但「先过滤」读起来更贴近「这张表最终长什么样」。
    */
   const filterable = onlyServed && servableNames !== null;
-  const shownGroups: TraeClientModelGroup[] = filterable
-    ? groups
-        .map((group) => ({
-          ...group,
-          models: group.models.filter((model) => servableNames.has(model.name)),
-        }))
-        .filter((group) => group.models.length > 0)
-    : groups;
+  const shownGroups: TraeClientModelGroup[] = groups
+    .map((group) => ({
+      ...group,
+      models: sortByCredits(
+        filterable ? group.models.filter((model) => servableNames.has(model.name)) : group.models,
+        (model) => model.credits,
+        creditSort,
+      ),
+    }))
+    // 只有**开着过滤**时才丢掉被过滤空的分组（那是我自己删空的）；
+    // 不过滤时哪怕某分组本来就空，也要原样留着 —— 空分组本身是上游的事实。
+    .filter((group) => !filterable || group.models.length > 0);
 
   /**
    * 被隐藏的**去重**条数（不是各行相加 —— 同一模型会在多个分组里重复）。
@@ -382,9 +435,11 @@ export function TraeModelList({
                           <th className="py-2 pr-4 font-medium">
                             {t("trae.gateway.models.colModel")}
                           </th>
-                          <th className="py-2 pr-4 font-medium">
-                            {t("trae.gateway.models.colCredits")}
-                          </th>
+                          <CreditSortHeader
+                            direction={creditSort}
+                            onToggle={() => setCreditSort((d) => nextCreditSort(d))}
+                            labels={CREDIT_SORT_LABELS}
+                          />
                           <th className="py-2 pr-4 font-medium">
                             {t("trae.gateway.models.colDefaultEffort")}
                           </th>

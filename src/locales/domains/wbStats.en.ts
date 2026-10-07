@@ -211,6 +211,14 @@ export const en = {
   // ---- Model table (column structure mirrors workbuddy2api-panel) ----
   "wbStats.gateway.colModel": "Model",
   "wbStats.gateway.colCredits": "Credit multiplier",
+  // Credit-multiplier sorting (added 2026-10-07) — three states:
+  // unsorted -> ascending (cheapest first) -> descending (priciest first).
+  // Identical wording to the Trae side so the two pages read the same.
+  "wbStats.gateway.creditSort": "Sort by credit multiplier",
+  "wbStats.gateway.creditSortAsc": "Multiplier low to high",
+  "wbStats.gateway.creditSortDesc": "Multiplier high to low",
+  "wbStats.gateway.creditSortNone": "Restore original order",
+  "wbStats.gateway.creditSortTip": "Models without a multiplier always stay at the bottom (they are not \"cheapest\" — they simply have no multiplier).",
   "wbStats.gateway.colDefaultEffort": "Default tier",
   "wbStats.gateway.colEfforts": "Supported thinking tiers",
   "wbStats.gateway.colContext": "Context length",

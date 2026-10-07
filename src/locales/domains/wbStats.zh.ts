@@ -216,6 +216,13 @@ export const zh = {
   // ---- 模型表格（参照 workbuddy2api-panel 的列结构）----
   "wbStats.gateway.colModel": "模型",
   "wbStats.gateway.colCredits": "积分倍率",
+  // 倍率列排序（2026-10-07 新增）——三态：未排序 → 升序（便宜在前）→ 降序（贵在前）。
+  // 与 Trae 侧逐字同款，两页可直接对读。
+  "wbStats.gateway.creditSort": "按积分倍率排序",
+  "wbStats.gateway.creditSortAsc": "倍率从低到高",
+  "wbStats.gateway.creditSortDesc": "倍率从高到低",
+  "wbStats.gateway.creditSortNone": "恢复原有顺序",
+  "wbStats.gateway.creditSortTip": "无倍率数据的模型始终排在最后（它们不是「最便宜」，是「没这个口径」）。",
   "wbStats.gateway.colDefaultEffort": "默认档",
   "wbStats.gateway.colEfforts": "支持的思考档位",
   "wbStats.gateway.colContext": "上下文长度",

@@ -68,6 +68,13 @@ export const en = {
   "trae.gateway.models.creditDiscounted": "After discount x{value}",
   "trae.gateway.models.creditDiscountedTip": "Actual rate after the member discount is x{value}; the number above is the base rate.",
   "trae.gateway.models.creditActivity": "Limited-time",
+  // Credit-rate sorting (added 2026-10-07) — three states, identical to the WorkBuddy side:
+  // unsorted -> ascending (cheapest first) -> descending (priciest first).
+  "trae.gateway.models.creditSort": "Sort by credit rate",
+  "trae.gateway.models.creditSortAsc": "Rate low to high",
+  "trae.gateway.models.creditSortDesc": "Rate high to low",
+  "trae.gateway.models.creditSortNone": "Restore original order",
+  "trae.gateway.models.creditSortTip": "Models without a rate always stay at the bottom (they are not \"cheapest\" — they simply have no rate).",
   "trae.gateway.models.effortNone": "This model is not in the tier table (upstream has no reasoning_effort support).",
   "trae.gateway.models.effortFixed": "Fixed: {effort}",
   "trae.gateway.models.effortDefaultTip": "Default tier: {effort}",

@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
+import { CreditSortHeader } from "@/components/gateway/credit-sort-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DemoAction } from "@/components/demo-action";
 import * as api from "@/lib/api";
+import { nextCreditSort, sortByCredits, type CreditSortDirection } from "@/lib/credit-sort";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/locales/zh";
@@ -28,6 +30,24 @@ const SOURCE_LABEL: Record<CatalogSource, { labelKey: TranslationKey; variant: "
 
 /** 区域 → 全限定模型名的前缀（参照 workbuddy2api-panel 的 `cn:hy4-preview-f` 写法）。 */
 const REGION_PREFIX: Record<Region, string> = { cn: "cn", global: "global" };
+
+/**
+ * 倍率列排序控件所需的文案键。
+ *
+ * 存**键**而不是文案：本表在语言切换时要跟着整表重渲染，把中文写进模块级常量
+ * 会让切换失效（与 `SOURCE_LABEL` 同一条约定）。
+ *
+ * 与 Trae 侧传的是**另一套键**（`trae.gateway.models.*`），但语义逐条对应 ——
+ * 两个组件共用同一个 `CreditSortHeader`，只有词表命名空间不同。
+ */
+const CREDIT_SORT_LABELS = {
+  column: "wbStats.gateway.colCredits",
+  sortLabel: "wbStats.gateway.creditSort",
+  toAsc: "wbStats.gateway.creditSortAsc",
+  toDesc: "wbStats.gateway.creditSortDesc",
+  toNone: "wbStats.gateway.creditSortNone",
+  tip: "wbStats.gateway.creditSortTip",
+} as const satisfies Record<string, TranslationKey>;
 
 function formatTime(ts: number | null): string {
   if (!ts) return "—";
@@ -85,9 +105,13 @@ const CREDIT_TIER_CLASS: Record<ReturnType<typeof creditTier>, string> = {
  * （`限时免费` / `夜间折扣` / `错峰使用`）。这里对齐的信息口径是：
  * **倍率数字为主，促销 / 免费标签跟随在同一格内**。
  *
+ * 排序控件**已于 2026-10-07 落地**（列头可点，三态）—— 见 `CreditSortHeader`
+ * 与 `lib/credit-sort.ts`。两个产品共用同一套排序语义。
+ *
  * ⚠️ 倍率 `0` 与「没有倍率」必须分开：前者是免费（`0x`），后者显示 `—`。
  * 早先这里踩过坑 —— 上游用自由文本，若把文案塞进 `credits` 就会抠不出数字，
  * 于是每条都退化成 `—`（见 `screenshot-demo.ts` 的 `demoCatalog` 注释）。
+ * 排序时同理：`null` 沉底，**绝不**当 `0` 排到最前（那是最危险的「省钱侧错值」）。
  */
 function CreditCell({ model }: { model: CatalogModel }) {
   const t = useT();
@@ -266,11 +290,28 @@ function ModelCell({ model, region }: { model: CatalogModel; region: Region }) {
  * 与上游目录（`credits` / `context_window` 那些）生命周期不同：
  * 目录会随账号刷新、可能失败；档位表永不变化、不依赖账号。
  * 因此两者**分开取**，档位取不到时只让那两列显示 `—`，不影响整表。
+ *
+ * ## 「积分倍率」列可排序（2026-10-07 新增）
+ *
+ * 列头是可点的按钮，三态循环：不排序 → 从低到高 → 从高到低 → 不排序。
+ * 状态机与比较器在 `lib/credit-sort.ts`，与 Trae 侧**共用同一份** ——
+ * 两页的表要逐列对读，排序语义不能各写一套。
+ *
+ * 不排序态**必须保留**：上游下发的原始顺序本身带信息，点过排序就回不去
+ * 等于把「别排」这个选项删掉。且**无倍率的行永远沉底**（两个方向都是）——
+ * 它们是「没这个口径」，不是「最便宜」，排到前面会诱导用户以为它们划算。
  */
 export function ModelList({ region, className }: { region: Region; className?: string }) {
   const t = useT();
   const [refreshing, setRefreshing] = useState(false);
   const [efforts, setEfforts] = useState<EffortCapabilityTable | null>(null);
+  /**
+   * 「积分倍率」列的排序方向（三态：无 / 升 / 降）。
+   *
+   * 不落 store / 不落 URL —— 与 Trae 侧的 `onlyServed` 同属「本卡片的展示参数」，
+   * 切页回来复位到「不排序」（更保守的一侧：还原上游原始顺序）。
+   */
+  const [creditSort, setCreditSort] = useState<CreditSortDirection>(null);
   const snapshot = useGatewayStore((s) => s.models[region]);
   const refreshModels = useGatewayStore((s) => s.refreshModels);
 
@@ -311,6 +352,15 @@ export function ModelList({ region, className }: { region: Region; className?: s
 
   const source = snapshot ? SOURCE_LABEL[snapshot.source] : null;
   const models = snapshot?.models ?? [];
+  /**
+   * 实际渲染的模型顺序。
+   *
+   * 排序**只影响展示**，不动 `snapshot`（数据源是 store 里的快照，改它就是改全局态）。
+   * `creditValue` 在这里做「字符串 → 数值」的解析：WorkBuddy 的倍率是**自由文本**
+   * （`"x0.79"` / `"x0.08 credits"`），解析不出来的（如 `auto`）返回 `null`，
+   * 由 `sortByCredits` 保证它们沉底。
+   */
+  const shownModels = sortByCredits(models, (model) => creditValue(model.credits), creditSort);
 
   return (
     <Card className={cn("gap-0 py-0", className)}>
@@ -350,7 +400,11 @@ export function ModelList({ region, className }: { region: Region; className?: s
                 <thead>
                   <tr className="border-b border-border/60 text-xs text-muted-foreground">
                     <th className="py-2 pr-4 font-medium">{t("wbStats.gateway.colModel")}</th>
-                    <th className="py-2 pr-4 font-medium">{t("wbStats.gateway.colCredits")}</th>
+                    <CreditSortHeader
+                      direction={creditSort}
+                      onToggle={() => setCreditSort((d) => nextCreditSort(d))}
+                      labels={CREDIT_SORT_LABELS}
+                    />
                     <th className="py-2 pr-4 font-medium">{t("wbStats.gateway.colDefaultEffort")}</th>
                     <th className="py-2 pr-4 font-medium">{t("wbStats.gateway.colEfforts")}</th>
                     <th className="py-2 pr-4 text-right font-medium">{t("wbStats.gateway.colContext")}</th>
@@ -358,7 +412,7 @@ export function ModelList({ region, className }: { region: Region; className?: s
                   </tr>
                 </thead>
                 <tbody>
-                  {models.map((model) => {
+                  {shownModels.map((model) => {
                     // 档位表按**上游 id**（小写）匹配，不能拿展示名查表。
                     const capability = efforts?.[model.id] ?? null;
                     return (

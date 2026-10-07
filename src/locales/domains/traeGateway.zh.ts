@@ -76,6 +76,13 @@ export const zh = {
   "trae.gateway.models.creditDiscounted": "折后 x{value}",
   "trae.gateway.models.creditDiscountedTip": "会员折扣后的实际倍率 x{value}；上方的数字是基础倍率。",
   "trae.gateway.models.creditActivity": "限时活动",
+  // 倍率列排序（2026-10-07 新增）——与 WorkBuddy 侧逐字同款三态：
+  // 未排序 → 升序（便宜在前）→ 降序（贵在前）。
+  "trae.gateway.models.creditSort": "按积分倍率排序",
+  "trae.gateway.models.creditSortAsc": "倍率从低到高",
+  "trae.gateway.models.creditSortDesc": "倍率从高到低",
+  "trae.gateway.models.creditSortNone": "恢复原有顺序",
+  "trae.gateway.models.creditSortTip": "无倍率数据的模型始终排在最后（它们不是「最便宜」，是「没这个口径」）。",
   "trae.gateway.models.effortNone": "该模型不在档位表中（上游不支持 reasoning_effort）。",
   "trae.gateway.models.effortFixed": "固定档：{effort}",
   "trae.gateway.models.effortDefaultTip": "默认档：{effort}",
