@@ -633,9 +633,24 @@ function demoApiKeys(): ApiKeyRecord[] {
 }
 
 function demoCatalog(region: Region): CatalogSnapshot {
+  /**
+   * 模型清单。
+   *
+   * ⚠️ 取值的硬约束：**每条都能在 `demoEffortTable(region)` 里查到**
+   * （档位表按 `id.toLowerCase()` 匹配，见下）。
+   * 演示页要能同时展示「有档位」与「无档位」两种形态，因此**故意留一条查不到**
+   * （`--pending-rollout` 那条），但**不能**让绝大多数都查不到 ——
+   * 早先 global 用 `GPT-5.6` / `Claude-Sonnet-4.5` 这类名字，
+   * 而真实 global 档位表里叫 `gpt-5.6-*` / `gemini-*`（没有裸 `gpt-5.6`），
+   * 于是「默认档 / 支持的思考档位」两列在演示站上整列是 `—`，
+   * 看起来像功能坏了，实际是假数据不像真数据（与 `credits` 那次踩的坑同类）。
+   *
+   * 国内那组的名字取自真实 `cn_effort_table()`；国际那组取自 `global_effort_table()`。
+   * 两组末尾各留一条**表里没有**的（`hy3-preview-dev`），用来展示未匹配形态。
+   */
   const models = region === "global"
-    ? ["GPT-5.6", "Claude-Sonnet-4.5", "Gemini-3-Pro", "GLM-5.3", "DeepSeek-V4-Pro"]
-    : ["GLM-5.3", "GLM-5.2", "DeepSeek-V4-Pro", "Kimi-K3", "hy3"];
+    ? ["GPT-5.6-Sol", "Gemini-3.5-Flash", "GLM-5.3", "Kimi-K3", "hy3-preview-dev"]
+    : ["GLM-5.3", "GLM-5.2", "DeepSeek-V4-Pro", "Kimi-K3", "hy3-preview-dev"];
   /**
    * 积分倍率。
    *
@@ -647,6 +662,11 @@ function demoCatalog(region: Region): CatalogSnapshot {
    *
    * 取值照 `~/.buddy-switch/gateway_models.*.json` 的实际分布来：
    * 国内版集中在 0.00–1.62，国际版跨 0.00–6.67，好让四档颜色都出现。
+   *
+   * ⚠️ 每条清单**都**刻意留一条档位表里查不到的模型（国内 `hy3-preview-dev`、
+   * 国际 `hy3-preview-dev`）：那两列会显示 `—`。演示页必须能同时看到
+   * 「有档位」与「无档位」两种形态 —— 只给能查到的，就看不出未匹配时的样子，
+   * 而「未匹配」正是真实链路里常见的状态（新模型先上线、档位表还没跟上）。
    */
   const credits = region === "global"
     ? ["x0.34", "x1.62", "x0.00 credits", "x1.39", "x6.67"]
@@ -677,28 +697,39 @@ function demoCatalog(region: Region): CatalogSnapshot {
  * 取真实 CN / Global 静态表里的几行，好让演示页能同时看到：
  * - 多档模型（`glm-5.3` → low/high/max）
  * - 单档模型（`kimi-k3-1` → medium）
- * - 未声明默认档的模型（`gy3` 一类，`default_declared: false`，展示层会标「推断」）
+ * - 未声明默认档的模型（`default_declared: false`，展示层会标「推断」）
  *
  * ⚠️ 与 `demoCatalog` 的模型名**大小写不同**（后者是 `GLM-5.3` 这类展示名，
  * 这里是 `glm-5.3` 这类上游 id）—— 这是刻意的：真实链路上档位表按**上游 id**
  * 匹配，展示层必须用小写 id 去查表。演示数据保持同样的大小写差异，
  * 才能暴露「拿展示名去查表」这种错（那样会一条都匹配不上）。
+ *
+ * ⚠️ 另一条约束：本表与 `demoCatalog` **必须大部分重合**（只刻意留一条查不到）。
+ * 两者交集为空时演示站上「默认档 / 支持的思考档位」两列整列是 `—` ——
+ * 那看起来像功能坏了，实际只是假数据没对齐。改任一表都要回头核对另一张。
  */
 function demoEffortTable(region: Region): EffortCapabilityTable {
   const table: EffortCapabilityTable = region === "global"
     ? {
+        // 与 `demoCatalog("global")` 的前四条一一对应。
         "gpt-5.6-sol": { efforts: ["low", "medium", "high", "xhigh", "max"], default_effort: "high", default_declared: true },
+        "gemini-3.5-flash": { efforts: ["medium"], default_effort: "high", default_declared: false },
         "glm-5.3": { efforts: ["low", "high", "max"], default_effort: "high", default_declared: true },
-        "glm-5.2": { efforts: ["high", "xhigh"], default_effort: "high", default_declared: true },
         "kimi-k3": { efforts: ["medium"], default_effort: "high", default_declared: false },
+        // 以下两条**不**在演示目录里：用来让「档位表有、目录没有」这个方向
+        // 也可被观察到（反向的「目录有、档位表没有」由 `hy3-preview-dev` 承担）。
+        "glm-5.2": { efforts: ["high", "xhigh"], default_effort: "high", default_declared: true },
         "deepseek-v4.1-flash": { efforts: ["high"], default_effort: "high", default_declared: false },
       }
     : {
+        // 与 `demoCatalog("cn")` 的前四条一一对应。
         "glm-5.3": { efforts: ["low", "high", "max"], default_effort: "high", default_declared: true },
         "glm-5.2": { efforts: ["high", "xhigh"], default_effort: "high", default_declared: true },
         "deepseek-v4-pro": { efforts: ["low", "high", "xhigh"], default_effort: "high", default_declared: true },
-        "kimi-k3-1": { efforts: ["medium"], default_effort: "high", default_declared: false },
+        "kimi-k3": { efforts: ["medium"], default_effort: "high", default_declared: false },
         "hy3": { efforts: ["low", "high"], default_effort: "high", default_declared: true },
+        // 不在演示目录里：让「档位表有、目录没有」也能被观察到。
+        "kimi-k3-1": { efforts: ["medium"], default_effort: "high", default_declared: false },
       };
   return table;
 }

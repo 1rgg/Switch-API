@@ -91,19 +91,34 @@ if (!/^\d+\.\d+\.\d+$/.test(version)) {
   process.exit(2);
 }
 
-// ★ 段内不得有前导零。与上一条是**两类**不同的错：段数错是本脚本自己拼错，
-//   前导零是**日期取值**触发的（每月 1–9 号必踩，2026-10-01 CI 四平台全红就是它）。
-//   放在这里而不是只在 `versionFromClock` 里改，是因为 `--tag` 是**外部输入**
-//   （CI 传 `GITHUB_REF_NAME`）—— 打错 tag 也要在本地就被拦下。
-const leadingZero = version
-  .split('.')
-  .find((segment) => segment.length > 1 && segment.startsWith('0'));
-if (leadingZero !== undefined) {
-  console.error(
-    `[stamp-version] 版本号不允许前导零段（semver 禁止）：段 "${leadingZero}" 以 0 开头，收到: ${version}`,
-  );
-  process.exit(2);
+/**
+ * Cargo 侧使用的版本号。
+ *
+ * ## 为什么可能与 `version` 不同
+ *
+ * Cargo 走**严格 semver**，禁止数字段带前导零（`error: invalid leading zero in
+ * patch version number`）。本脚本自己生成的 `<YYYY>.<M>.<DHHMM>` 已经刻意不补零，
+ * 但 **`--tag` 是外部输入**：用户完全可以打 `v2026.10.07` 这种带前导零的
+ * 日期形态 tag（人写日期就爱补零，`2026.10.07` 比 `2026.10.7` 更像日期）。
+ *
+ * 早先遇到这种 tag 是**直接 exit 2 拦下**（见下方 `leadingZero` 那段的历史意图）——
+ * 那对「自己拼错日期」是合理的，但对「用户明确指定的版本」就成了拦路虎：
+ * 安装包名、Release tag、更新清单都需要那个字符串，而 Cargo 又必须收一个合法的。
+ *
+ * 现在分开处理：JSON / tauri.conf 用原字符串（用户要什么就是什么），
+ * Cargo 用去零形态。两者的**判等**由 `update::compare_versions` 保证
+ * （按 `split('.').parse::<i64>()` 比较，`07` 与 `7` 都是 `7`）。
+ *
+ * ⚠️ 只有**纯数字段**才去零：`1.0.0-beta.01` 这种形态不该被本函数改写。
+ */
+function dereZero(v) {
+  return v
+    .split('.')
+    .map((seg) => (/^\d+$/.test(seg) ? String(Number(seg)) : seg))
+    .join('.');
 }
+
+const semver = dereZero(version);
 
 if (printOnly) {
   console.log(version);
@@ -126,13 +141,26 @@ function readJson(rel) {
 /**
  * 一个「版本载体」。`read()` 返回若干 `{ key, value }` 条目（有的文件里版本出现在多处），
  * `write(v)` 写回并返回是否真的改动。
+ *
+ * `flavor` 决定这个载体收**哪种形态**的版本号：
+ *   - `"display"`（默认）：原字符串，即用户 / tag 给的那个（JSON、tauri.conf、npm 包）。
+ *   - `"semver"`：去前导零形态（Cargo.toml / Cargo.lock）—— 严格 semver 要求。
+ *
+ * 两者在 `2026.10.07` 这种日期版本上会不同，因此**必须在载体上声明**，
+ * 不能在写回时统一取一个值（那会让 `--check` 把它们全判成不一致）。
  */
 const targets = [];
+
+/** 按载体口味挑值。 */
+function valueFor(flavor) {
+  return flavor === 'semver' ? semver : version;
+}
 
 /** 顶层 `version` 字段（package.json / tauri.conf.json / 各 npm 包）。 */
 function addJsonTarget(rel) {
   targets.push({
     rel,
+    flavor: 'display',
     read() {
       const j = readJson(rel);
       if (!j || j.version === undefined) return [];
@@ -159,6 +187,7 @@ function addJsonTarget(rel) {
 function addLockTarget(rel = 'package-lock.json') {
   targets.push({
     rel,
+    flavor: 'display',
     read() {
       const j = readJson(rel);
       if (!j) return [];
@@ -196,6 +225,7 @@ function addLockTarget(rel = 'package-lock.json') {
 function addOptionalDepsTarget(rel = 'npm/package.json') {
   targets.push({
     rel,
+    flavor: 'display',
     read() {
       const j = readJson(rel);
       if (!j || !j.optionalDependencies) return [];
@@ -223,6 +253,8 @@ function addOptionalDepsTarget(rel = 'npm/package.json') {
 function addCargoTarget(rel) {
   targets.push({
     rel,
+    // Cargo 严格 semver：前导零段非法，故收去零形态。
+    flavor: 'semver',
     read() {
       const abs = path.join(ROOT, rel);
       if (!fs.existsSync(abs)) return [];
@@ -277,14 +309,18 @@ const rows = [];
 
 if (checkOnly) {
   const ref = readJson('package.json');
-  const expected = ref && ref.version ? String(ref.version) : null;
-  if (!expected) {
+  const expectedDisplay = ref && ref.version ? String(ref.version) : null;
+  if (!expectedDisplay) {
     console.error('[stamp-version] 无法从 package.json 取到 version，校验中止。');
     process.exit(2);
   }
+  // Cargo 侧收的是去零形态，因此它要跟去零后的基准比 —— 否则 `2026.10.07`
+  // 会被判成「与 package.json 不符」，而那其实是**预期**的差异。
+  const expectedSemver = dereZero(expectedDisplay);
   let mismatches = 0;
   let seen = 0;
   for (const t of targets) {
+    const expected = t.flavor === 'semver' ? expectedSemver : expectedDisplay;
     for (const e of t.read()) {
       seen++;
       if (e.value !== expected) {
@@ -294,10 +330,12 @@ if (checkOnly) {
     }
   }
   if (mismatches > 0) {
-    console.error(`[stamp-version] 版本不一致：${mismatches}/${seen} 处与 package.json(${expected}) 不符。`);
+    console.error(
+      `[stamp-version] 版本不一致：${mismatches}/${seen} 处与 package.json(${expectedDisplay}) 不符。`,
+    );
     process.exit(1);
   }
-  console.log(`[stamp-version] 校验通过：${seen} 处载体均为 ${expected}`);
+  console.log(`[stamp-version] 校验通过：${seen} 处载体均为 ${expectedDisplay}`);
   process.exit(0);
 }
 
@@ -305,9 +343,10 @@ let changedFiles = 0;
 
 for (const t of targets) {
   const before = t.read().map((e) => e.value);
-  const changed = t.write(version);
+  const want = valueFor(t.flavor);
+  const changed = t.write(want);
   if (changed) changedFiles++;
-  rows.push({ rel: t.rel, changed, before: before.join(' / ') });
+  rows.push({ rel: t.rel, changed, before: before.join(' / '), want });
 }
 
 // ------------------------------------------------------------------ 输出
@@ -315,7 +354,13 @@ for (const t of targets) {
 const width = rows.reduce((n, r) => Math.max(n, r.rel.length), 0);
 for (const r of rows) {
   const mark = r.changed ? '已更新' : '无变化';
-  console.log(`  ${mark}  ${r.rel.padEnd(width)}${r.changed ? `   (${r.before} -> ${version})` : ''}`);
+  console.log(
+    `  ${mark}  ${r.rel.padEnd(width)}${r.changed ? `   (${r.before} -> ${r.want})` : ''}`,
+  );
 }
 
-console.log(`版本已统一为 ${version}（改动 ${changedFiles} 个文件）`);
+console.log(
+  `版本已统一为 ${version}` +
+    (semver === version ? '' : `（Cargo 侧 ${semver}）`) +
+    `（改动 ${changedFiles} 个文件）`,
+);
