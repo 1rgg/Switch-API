@@ -367,24 +367,6 @@ npm/                     # npm 包（**尚未发布**）：主包 @nextagentx/bu
 
 **欢迎一切形式的贡献，也欢迎 PR。** 提 Issue、补文档、修 Bug、加功能都算 —— 完整的贡献指引（能做什么、PR 自检清单、本仓库的几条代码约定）见 **[CONTRIBUTING.md](CONTRIBUTING.md)**（[English](CONTRIBUTING.en.md)）。
 
-## 支持这个项目
-
-如果 Buddy Switch 帮到了你，可以请作者喝杯饮料 ☕
-
-<table>
-  <thead>
-    <tr>
-      <th>微信支付</th>
-      <th>支付宝</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><img src="docs/images/donate-wechat.png" alt="微信支付收款码" width="260" /></td>
-      <td><img src="docs/images/donate-alipay.jpg" alt="支付宝收款码" width="260" /></td>
-    </tr>
-  </tbody>
-</table>
 
 
 ## 致谢

@@ -1,3 +1,12 @@
+<!--
+ * @Author       : your name
+ * @Date         : 2026-10-07 11:23:03
+ * @LastEditTime : 2026-10-07 19:16:07
+ * @LastEditors  : LongZhiFan
+ * @Description  : 
+ * @FilePath     : \trae-workbuddy-switch\README.en.md
+ * 
+-->
 <p align="center">
   <img src="public/icon-transparent.png" alt="Buddy Switch icon" width="128" />
 </p>
@@ -371,24 +380,6 @@ The matching public key is hard-coded in `src-tauri/tauri.conf.json` under
 
 **Contributions of every kind are welcome — pull requests included.** Issues, documentation, bug fixes and features all count — see **[CONTRIBUTING.en.md](CONTRIBUTING.en.md)** ([简体中文](CONTRIBUTING.md)) for the full guide: what you can work on, the PR checklist and this repository's code conventions.
 
-## Support the project
-
-If Buddy Switch has been useful to you, you can buy the author a drink ☕
-
-<table>
-  <thead>
-    <tr>
-      <th>WeChat Pay</th>
-      <th>Alipay</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><img src="docs/images/donate-wechat.png" alt="WeChat Pay QR code" width="260" /></td>
-      <td><img src="docs/images/donate-alipay.jpg" alt="Alipay QR code" width="260" /></td>
-    </tr>
-  </tbody>
-</table>
 
 
 ## Acknowledgements
