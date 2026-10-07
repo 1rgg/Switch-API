@@ -326,6 +326,43 @@ src/                     # frontend: components / pages / lib (api.ts dual chann
 npm/                     # npm packages (**not published yet**): main package @nextagentx/buddy-switch + 5 platform packages
 ```
 
+## Releases and auto-update (specific to this fork)
+
+This fork builds, signs and publishes the Windows installer through its own workflow,
+[`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml). Do **not**
+touch upstream's `build.yml` / `pages.yml` — leave them as they are so that upstream
+merges stay conflict-free.
+
+### Publishing a new version
+
+1. Bump the `version` in `package.json` (**and** in `src-tauri/tauri.conf.json` — both must match)
+2. Commit and push to `main` — the workflow builds, signs and creates a Release (tagged `v<version>`)
+3. Users on an older build click "check for updates" in the bottom-left corner to upgrade
+
+### Signing key (required for in-app auto-update)
+
+`createUpdaterArtifacts: true` in `tauri.conf.json` makes the signing private key a **hard
+build dependency**. This fork requires a secret under
+`Settings → Secrets and variables → Actions`:
+
+| Secret | Value |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | The private key **file contents** (not a path) |
+
+Generate the key with `npx tauri signer generate -w <path>`. The current key has **no
+password**, so `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is not needed.
+
+The matching public key is hard-coded in `src-tauri/tauri.conf.json` under
+`plugins.updater.pubkey`, and `plugins.updater.endpoints` points at this fork's Releases
+`latest.json`.
+
+> ⚠️ **If the private key is lost, existing installs will never receive another automatic
+> update** and must be reinstalled by hand. Back the key up offline. Never commit it —
+> `.gitignore` already excludes `*.key` and `.updater-keys/`.
+
+> ⚠️ **This fork and upstream `NextAgentX/trae-workbuddy-switch` use different signing
+> keys**, so their builds must not be mixed — mixing them breaks update signature verification.
+
 ## Contributing
 
 **Contributions of every kind are welcome — pull requests included.** Issues, documentation, bug fixes and features all count — see **[CONTRIBUTING.en.md](CONTRIBUTING.en.md)** ([简体中文](CONTRIBUTING.md)) for the full guide: what you can work on, the PR checklist and this repository's code conventions.
