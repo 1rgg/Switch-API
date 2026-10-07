@@ -1205,6 +1205,25 @@ pub fn get_gateway_models(region: Option<String>) -> Value {
     serde_json::to_value(snapshot).unwrap_or(Value::Null)
 }
 
+/// GET /api/gateway/efforts —— 本区域的**全量档位能力表**（按 region）。
+///
+/// 静态表，与账号 / 上游目录无关，因此是同步命令（无 `await`、不会失败）。
+/// 口径与 webui 通道的 `api_gateway_efforts` 一致。
+#[tauri::command]
+pub fn get_gateway_efforts(region: Option<String>) -> Value {
+    let region = parse_region(region.as_deref());
+    let table = buddy_switch_gateway::outbound::effort::static_effort_cap(region);
+    let mut out = serde_json::Map::new();
+    for model in table.keys() {
+        if let Some(capability) = buddy_switch_gateway::lookup_effort_capability(region, model) {
+            if let Ok(value) = serde_json::to_value(&capability) {
+                out.insert((*model).to_string(), value);
+            }
+        }
+    }
+    Value::Object(out)
+}
+
 /// POST /api/gateway/models/refresh —— 手动刷新目录（按 region）。
 #[tauri::command]
 pub async fn refresh_gateway_models(region: Option<String>) -> Result<Value, String> {

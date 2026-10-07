@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
@@ -10,7 +10,13 @@ import * as api from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/locales/zh";
-import type { CatalogSource, Region } from "@/lib/types";
+import type {
+  CatalogModel,
+  CatalogSource,
+  EffortCapabilityTable,
+  ModelEffortCapability,
+  Region,
+} from "@/lib/types";
 import { useGatewayStore } from "@/stores/gateway";
 
 /** 只存键不存文案：语言切换时整张表才会跟着变。 */
@@ -19,6 +25,9 @@ const SOURCE_LABEL: Record<CatalogSource, { labelKey: TranslationKey; variant: "
   cached: { labelKey: "wbStats.gateway.sourceCached", variant: "secondary" },
   builtin: { labelKey: "wbStats.gateway.sourceBuiltin", variant: "warning" },
 };
+
+/** 区域 → 全限定模型名的前缀（参照 workbuddy2api-panel 的 `cn:hy4-preview-f` 写法）。 */
+const REGION_PREFIX: Record<Region, string> = { cn: "cn", global: "global" };
 
 function formatTime(ts: number | null): string {
   if (!ts) return "—";
@@ -70,85 +79,223 @@ const CREDIT_TIER_CLASS: Record<ReturnType<typeof creditTier>, string> = {
 };
 
 /**
- * 积分倍率徽标（参照 `workbuddy2api-panel` 的「积分倍率」列）。
+ * 「积分倍率」单元格（参照 `workbuddy2api-panel` 的同名列）。
  *
- * 那个面板把倍率做成**整列**并支持「倍率 低 → 高」排序；本卡是胶囊排版、
- * 一行内混排，因此取它的**信息口径**而非版式：倍率跟随在模型名之后，
- * 按高低分档着色，无数据显示 `—` 并压暗。
+ * 那个面板把倍率做成**整列**并支持按倍率排序，参考页上也带了促销标签
+ * （`限时免费` / `夜间折扣` / `错峰使用`）。这里对齐的信息口径是：
+ * **倍率数字为主，促销 / 免费标签跟随在同一格内**。
  *
- * `free` 时倍率多半是 `x0.00`，但**免费徽标另有其人**（`free` 字段 / `限时免费`
- * 标签），这里不重复表达「免费」，只负责把数值如实显示出来。
+ * ⚠️ 倍率 `0` 与「没有倍率」必须分开：前者是免费（`0x`），后者显示 `—`。
+ * 早先这里踩过坑 —— 上游用自由文本，若把文案塞进 `credits` 就会抠不出数字，
+ * 于是每条都退化成 `—`（见 `screenshot-demo.ts` 的 `demoCatalog` 注释）。
  */
-function CreditBadge({ credits }: { credits: string | null }) {
+function CreditCell({ model }: { model: CatalogModel }) {
   const t = useT();
-  const value = creditValue(credits);
+  const value = creditValue(model.credits);
 
-  if (value === null) {
-    // 无倍率（如 `auto`）不是错误，只是没这个口径 —— 与「倍率 0」区分开。
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {value === null ? (
+        // 无倍率（如 `auto`）不是错误，只是没这个口径 —— 与「倍率 0」区分开。
+        <span className="font-mono text-xs text-muted-foreground/60" title={t("wbStats.gateway.creditNone")}>
+          —
+        </span>
+      ) : (
+        <span
+          data-credits={value}
+          title={t("wbStats.gateway.creditTitle", { value: model.credits ?? String(value) })}
+          className={cn(
+            "rounded border px-1.5 py-0.5 font-mono text-xs leading-4 tabular-nums",
+            CREDIT_TIER_CLASS[creditTier(value)],
+          )}
+        >
+          {model.credits}
+        </span>
+      )}
+      {model.free && (
+        <Badge variant="success" className="rounded-md px-1.5 py-0 text-[10px]">
+          {t("wbStats.gateway.free")}
+        </Badge>
+      )}
+      {model.badges.map((badge) => (
+        <Badge key={badge} variant="warning" className="rounded-md px-1.5 py-0 text-[10px]">
+          {badge}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
+/** 单个档位的徽章。`default` 那档额外高亮 —— 参考页上也把默认档标了出来。 */
+function EffortBadge({ effort, isDefault }: { effort: string; isDefault: boolean }) {
+  return (
+    <span
+      data-effort={effort}
+      data-effort-default={isDefault ? "yes" : "no"}
+      className={cn(
+        "rounded border px-1.5 py-0 text-[10px] leading-4",
+        isDefault
+          ? "border-primary/40 bg-primary/10 font-medium text-primary"
+          : "border-border bg-muted/50 text-muted-foreground",
+      )}
+    >
+      {effort}
+      {isDefault && <span className="ml-1 opacity-70">·</span>}
+    </span>
+  );
+}
+
+/**
+ * 「默认档」单元格。
+ *
+ * 单档模型（如 `kimi-k3-1` 只有 `medium`）按参考页的写法显示「固定档：medium」，
+ * 因为此时「默认」没有选择意义 —— 用户能选的只有那一档。
+ *
+ * `default_declared === false` 时标「推断」：后端在静态表未声明默认档时会兜底成
+ * `high`（见 `effort.rs` 的 `DEFAULT_DEEPSEEK_EFFORT`），把它当上游声明值展示会误导。
+ */
+function DefaultEffortCell({ capability }: { capability: ModelEffortCapability | null }) {
+  const t = useT();
+
+  if (!capability) {
+    return <span className="text-xs text-muted-foreground/60" title={t("wbStats.gateway.effortNone")}>—</span>;
+  }
+
+  // 只有一档 → 没有「默认」的概念，按参考页写「固定档：X」。
+  if (capability.efforts.length === 1) {
     return (
-      <span
-        className="shrink-0 font-mono text-[10px] text-muted-foreground/60"
-        title={t("wbStats.gateway.creditNone")}
-      >
-        —
+      <span className="text-xs text-muted-foreground">
+        {t("wbStats.gateway.effortFixed", { effort: capability.efforts[0] })}
       </span>
     );
   }
 
   return (
-    <span
-      data-credits={value}
-      title={t("wbStats.gateway.creditTitle", { value: credits ?? String(value) })}
-      className={cn(
-        "shrink-0 rounded border px-1 py-0 font-mono text-[10px] leading-4 tabular-nums",
-        CREDIT_TIER_CLASS[creditTier(value)],
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span
+        data-effort-default-of={capability.default_effort}
+        title={t("wbStats.gateway.effortDefaultTip", { effort: capability.default_effort })}
+        className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0 font-mono text-[10px] leading-4 font-medium text-primary"
+      >
+        {capability.default_effort}
+      </span>
+      {!capability.default_declared && (
+        <span
+          title={t("wbStats.gateway.effortInferredTip")}
+          className="rounded border border-border bg-muted/50 px-1.5 py-0 text-[10px] leading-4 text-muted-foreground"
+        >
+          {t("wbStats.gateway.effortInferred")}
+        </span>
       )}
-    >
-      {credits}
-    </span>
+    </div>
+  );
+}
+
+/** 「支持的思考档位」单元格：列出全部支持档，默认档高亮。 */
+function EffortsCell({ capability }: { capability: ModelEffortCapability | null }) {
+  const t = useT();
+
+  if (!capability || capability.efforts.length === 0) {
+    return <span className="text-xs text-muted-foreground/60" title={t("wbStats.gateway.effortNone")}>—</span>;
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {capability.efforts.map((effort) => (
+        <EffortBadge key={effort} effort={effort} isDefault={effort === capability.default_effort} />
+      ))}
+    </div>
+  );
+}
+
+/** 「模型」单元格：全限定名 / 显示名 + 模型 id / 能力标签（参照参考页的三行结构）。 */
+function ModelCell({ model, region }: { model: CatalogModel; region: Region }) {
+  const t = useT();
+  // 「工具」：WorkBuddy 的模型清单未下发 function-calling 能力，一律不下结论，
+  // 只标「是否支持图片」。参考页那列还带「思考常开」，本仓无对应字段，故不编。
+  return (
+    <div className="min-w-[15rem] space-y-1">
+      <code className="block font-mono text-xs font-semibold text-foreground">
+        {t("wbStats.gateway.qualifiedId", { region: REGION_PREFIX[region], id: model.id })}
+      </code>
+      <div className="flex flex-wrap items-baseline gap-1.5">
+        <span className="text-xs text-muted-foreground">{model.name}</span>
+        {model.id !== model.name && (
+          <code className="font-mono text-[10px] text-muted-foreground/70">{model.id}</code>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        <span
+          className={cn(
+            "rounded border px-1.5 py-0 text-[10px] leading-4",
+            model.supports_images
+              ? "border-border bg-muted/50 text-muted-foreground"
+              : "border-border/60 bg-transparent text-muted-foreground/60",
+          )}
+        >
+          {model.supports_images ? t("wbStats.gateway.capVision") : t("wbStats.gateway.capNoVision")}
+        </span>
+      </div>
+    </div>
   );
 }
 
 /**
  * 模型列表：展示来源徽标（实时 / 已保存 / 内置）与刷新按钮（P0-4 / P0-12 / P1-7）。
  *
+ * ## 版式参照 `workbuddy2api-panel`（表格，2026-10-07 起）
+ *
+ * 原先这里是**胶囊流式排版**（一行内多个 chip 换行）。改为参考页的**表格**：
+ * 「模型 / 积分倍率 / 默认档 / 支持的思考档位 / 上下文长度 / 最大输出」六列。
+ *
+ * 改成表格的**理由**是可读性而非跟风：胶囊排版下每个模型的字段长度差异很大
+ * （有的带 3 个徽标、有的没有），横向对齐被人为破坏，「哪个模型上下文更长」
+ * 这类**跨行比较**必须逐条读数字；表格把同一字段对齐到一列，比较变成扫一列。
+ *
  * ## 每个条目同时显示**模型 id**（与 Trae 侧同口径）
  *
  * 展示名（`CatalogModel.name`，如 `DeepSeek-V4-Pro`）与模型 id
  * （`CatalogModel.id`，如 `deepseek-v4-pro`）**不是同一个值**：配置 API Key、
- * 写各客户端接入配置时，真正要填的是 **id**。
+ * 写各客户端接入配置时，真正要填的是 **id**。本表第一列同时给出
+ * **全限定名**（`cn:deepseek-v4-pro`，照参考页写法）、展示名与 id。
  *
- * 此前这里只渲染 name，用户看到 `DeepSeek-V4-Pro` 后无从得知该填
- * `deepseek-v4-pro`，只能去翻 `/v1/models` 或猜。现在 id 以等宽小字跟随在
- * 展示名之后，`id === name` 时不重复写（如内置兜底条目 `id: "hy3"` /
- * `name: "Hy3"` 大小写不同仍会显示，同值条目如 `auto`/`Auto` 亦同）。
+ * ## 档位两列的数据来源与 `/models` 不是一条
  *
- * 口径与 Trae 侧 `trae-model-list.tsx` 的 `ModelChip` 保持一致：
- * **展示名为主，id 用等宽小字跟随**，避免两套模型卡长得不一样。
- *
- * ## 每个条目显示**积分倍率**（参照 workbuddy2api-panel）
- *
- * 参考实现 `github.com/linguo2625469/workbuddy2api-panel` 的模型页把倍率做成
- * **整列**（`rateCell`）并支持「倍率 低 → 高」排序。本卡是胶囊排版、一行内混排，
- * 因此取它的**信息口径**而非版式：倍率以等宽小徽标跟随在模型名之后，
- * 按高低分档着色（`free`/`low` 绿、`mid` 琥珀、`high` 玫红），
- * 让「哪个模型划算」不必逐个读数字。
- *
- * `credits` 是上游给的**自由文本**（实测有 `x0.79`、`x0.11 credits`、`x0.00`
- * 三种写法），所以抠数值走 `creditValue`，取不到才显示 `—` ——
- * 「倍率为 0」与「上游没给倍率」是两件事，不能都渲染成 0。
- *
- * ## 版本由页面传入（受控），组件内**不再自带版本选择器**
- *
- * 改造前这里有个内部 `Tabs`，与页面上的接入地址 / 账号池 / 接入指引各自为政：
- * 在这张卡里切到国际版，页面其他部分还停在国内版 —— 同一个「当前版本」在四个地方
- * 各说各话。现在与 Trae 侧一致：**页面持有唯一版本，本组件只负责渲染**。
+ * 「默认档 / 支持的思考档位」来自后端**编译期静态表**
+ * （`buddy-switch-gateway` 的 `outbound/effort.rs`，按 region 分 CN / Global 两张），
+ * 与上游目录（`credits` / `context_window` 那些）生命周期不同：
+ * 目录会随账号刷新、可能失败；档位表永不变化、不依赖账号。
+ * 因此两者**分开取**，档位取不到时只让那两列显示 `—`，不影响整表。
  */
 export function ModelList({ region, className }: { region: Region; className?: string }) {
   const t = useT();
   const [refreshing, setRefreshing] = useState(false);
+  const [efforts, setEfforts] = useState<EffortCapabilityTable | null>(null);
   const snapshot = useGatewayStore((s) => s.models[region]);
   const refreshModels = useGatewayStore((s) => s.refreshModels);
+
+  /**
+   * 档位表一次性取回（整表，不是逐模型查）。
+   *
+   * 失败**不报错**：它只影响两列的展示，报错反而干扰用户 ——
+   * 与「上游目录取不到」是两种严重程度，不该同一待遇。
+   * 依赖只有 region：档位表是静态的，刷新模型列表不必重取。
+   */
+  useEffect(() => {
+    let alive = true;
+    setEfforts(null);
+    api
+      .getGatewayEfforts(region)
+      .then((table) => {
+        if (alive) setEfforts(table);
+      })
+      .catch(() => {
+        // 静默失败：两列退化为 `—`，其余列照常展示。
+      });
+    return () => {
+      alive = false;
+    };
+  }, [region]);
 
   async function onRefresh() {
     setRefreshing(true);
@@ -163,6 +310,7 @@ export function ModelList({ region, className }: { region: Region; className?: s
   }
 
   const source = snapshot ? SOURCE_LABEL[snapshot.source] : null;
+  const models = snapshot?.models ?? [];
 
   return (
     <Card className={cn("gap-0 py-0", className)}>
@@ -187,54 +335,80 @@ export function ModelList({ region, className }: { region: Region; className?: s
               </Badge>
             </span>
             <span>{t("wbStats.gateway.updatedAt", { time: formatTime(snapshot?.fetched_at ?? null) })}</span>
-            <span>{t("wbStats.gateway.modelsCount", { n: snapshot?.models.length ?? 0 })}</span>
+            <span>{t("wbStats.gateway.modelsCount", { n: models.length })}</span>
           </div>
         )}
         {snapshot?.note && <p className="mb-3 text-xs text-amber-600">{snapshot.note}</p>}
-        {!snapshot || snapshot.models.length === 0 ? (
+        {models.length === 0 ? (
           <p className="py-4 text-sm text-muted-foreground">{t("wbStats.gateway.noModels")}</p>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {snapshot.models.map((model) => (
-              <span
-                key={model.id}
-                // 验收钩子：CDP 场景据此逐个断言模型 id，不必靠文案 / className 反查。
-                data-model={model.id}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 px-2.5 py-1 text-xs"
-                title={`${t("wbStats.gateway.modelTitle", {
-                  name: model.name,
-                  context: model.context_window,
-                  max: model.max_tokens,
-                })}${model.credits ? ` · ${t("wbStats.gateway.creditTitle", { value: model.credits })}` : ""}${
-                  // id 与展示名同值时卡上不重复写（见下方注释），但 tooltip 里始终带上，
-                  // 「要填哪个值」这件事在任何一条上都能查到。
-                  model.id !== model.name ? ` · ${t("wbStats.gateway.modelIdTip", { id: model.id })}` : ""
-                }`}
-              >
-                <span className="font-medium">{model.name}</span>
-                {/* 模型 id（调用时真正要传的值）：与展示名不同才重复写一遍，
-                    避免「Auto / Auto」这类同值双写（与 Trae 侧 ModelChip 同口径）。 */}
-                {model.id !== model.name && (
-                  <code className="font-mono text-[10px] text-muted-foreground">{model.id}</code>
-                )}
-                {/* 积分倍率：紧跟在 id 之后、徽标之前 —— 「这模型多少钱」比
-                    「有什么促销」更常被查，排在促销标签前面。 */}
-                <CreditBadge credits={model.credits ?? null} />
-                {model.free && (
-                  <Badge variant="success" className="rounded-md px-1.5 py-0 text-[10px]">
-                    {t("wbStats.gateway.free")}
-                  </Badge>
-                )}
-                {model.badges.map((badge) => (
-                  <Badge key={badge} variant="warning" className="rounded-md px-1.5 py-0 text-[10px]">
-                    {badge}
-                  </Badge>
-                ))}
-              </span>
-            ))}
-          </div>
+          <>
+            <p className="mb-3 text-xs text-muted-foreground">{t("wbStats.gateway.tableHint")}</p>
+            {/* 窄屏横向滚动：六列在 720px 最小窗口下放不开，宁可滚动也不压字。 */}
+            <div className="-mx-1 overflow-x-auto">
+              <table className="w-full min-w-[54rem] border-collapse text-left">
+                <thead>
+                  <tr className="border-b border-border/60 text-xs text-muted-foreground">
+                    <th className="py-2 pr-4 font-medium">{t("wbStats.gateway.colModel")}</th>
+                    <th className="py-2 pr-4 font-medium">{t("wbStats.gateway.colCredits")}</th>
+                    <th className="py-2 pr-4 font-medium">{t("wbStats.gateway.colDefaultEffort")}</th>
+                    <th className="py-2 pr-4 font-medium">{t("wbStats.gateway.colEfforts")}</th>
+                    <th className="py-2 pr-4 text-right font-medium">{t("wbStats.gateway.colContext")}</th>
+                    <th className="py-2 text-right font-medium">{t("wbStats.gateway.colMaxTokens")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {models.map((model) => {
+                    // 档位表按**上游 id**（小写）匹配，不能拿展示名查表。
+                    const capability = efforts?.[model.id] ?? null;
+                    return (
+                      <tr
+                        key={model.id}
+                        // 验收钩子：CDP 场景据此逐个断言模型 id，不必靠文案 / className 反查。
+                        data-model={model.id}
+                        className="border-b border-border/40 last:border-b-0 align-top"
+                      >
+                        <td className="py-3 pr-4">
+                          <ModelCell model={model} region={region} />
+                        </td>
+                        <td className="py-3 pr-4">
+                          <CreditCell model={model} />
+                        </td>
+                        <td className="py-3 pr-4">
+                          <DefaultEffortCell capability={capability} />
+                        </td>
+                        <td className="py-3 pr-4">
+                          <EffortsCell capability={capability} />
+                        </td>
+                        <td className="py-3 pr-4 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                          {formatTokens(model.context_window)}
+                        </td>
+                        <td className="py-3 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                          {formatTokens(model.max_tokens)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
     </Card>
   );
+}
+
+/** 上下文 / 输出长度 → 人类可读（`131072` → `128K`，`1000000` → `1M`）。 */
+function formatTokens(tokens: number): string {
+  if (!tokens) return "—";
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000;
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
+  }
+  if (tokens >= 1000) {
+    const thousands = tokens / 1000;
+    return `${Number.isInteger(thousands) ? thousands : thousands.toFixed(1)}K`;
+  }
+  return String(tokens);
 }

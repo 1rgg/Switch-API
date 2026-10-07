@@ -45,7 +45,23 @@ export const en = {
   "trae.gateway.models.badgeBeta": "Beta",
   "trae.gateway.models.badgeCustom": "Custom",
   "trae.gateway.models.badgeNotServed": "Not served",
-  "trae.gateway.models.context": "Context {tokens}",
+  // ---- model table (mirrors workbuddy2api-panel's columns, column-for-column with the WorkBuddy table) ----
+  "trae.gateway.models.tableHint": "The table lists every model in this client's cache, grouped by function; rows marked \"Not served\" fall outside this client's function and return 4001.",
+  "trae.gateway.models.colModel": "Model",
+  "trae.gateway.models.colCredits": "Credit rate",
+  "trae.gateway.models.colDefaultEffort": "Default tier",
+  "trae.gateway.models.colEfforts": "Supported effort tiers",
+  "trae.gateway.models.colContext": "Context",
+  "trae.gateway.models.colMaxTokens": "Max output",
+  // The Trae upstream list has **no** credit-rate field — this column is always "—", so the tooltip says "not applicable", not "unavailable".
+  "trae.gateway.models.creditNotApplicable": "The Trae upstream list has no per-model credit rate (credits are tracked per account package).",
+  "trae.gateway.models.effortNone": "This model is not in the tier table (upstream has no reasoning_effort support).",
+  "trae.gateway.models.effortFixed": "Fixed: {effort}",
+  "trae.gateway.models.effortDefaultTip": "Default tier: {effort}",
+  "trae.gateway.models.effortInferred": "Inferred",
+  "trae.gateway.models.effortInferredTip": "The tier table declares no default; this is the backend fallback, not an upstream declaration.",
+  "trae.gateway.models.capVision": "Vision",
+  "trae.gateway.models.capNoVision": "Text only",
 
   // =====================================================================
   // gateway/trae-request-log.tsx —— request log

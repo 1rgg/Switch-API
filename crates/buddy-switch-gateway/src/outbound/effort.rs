@@ -138,6 +138,53 @@ pub fn static_effort_cap(region: Region) -> &'static HashMap<&'static str, Effor
     }
 }
 
+/// 单个模型的**对外**档位能力（展示用）。
+///
+/// 与 [`EffortSpec`] 的区别：`EffortSpec` 是内部表结构（`default` 允许为 `None`，
+/// 表示「静态表没写」）；这里的 `default_effort` 已按 [`lookup_default_effort`]
+/// 的规则**兜底成实际会生效的档位**，因此永远非空 —— 展示层不需要再判空。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ModelEffortCapability {
+    /// 支持的档位（按强度升序，即 off < minimal < low < medium < high < xhigh < max）。
+    pub efforts: Vec<String>,
+    /// 实际生效的默认档位（静态表未声明时为 `high`，见 [`DEFAULT_DEEPSEEK_EFFORT`]）。
+    pub default_effort: String,
+    /// 静态表是否声明了默认档；`false` 说明上面那个值是兜底来的，不是上游定的。
+    ///
+    /// 展示层据此决定要不要给「默认档」加「推断」标记 —— 把兜底值当成上游声明值
+    /// 展示会误导用户（实测 CN 表里 `deepseek-v4-flash` / `glm-5.1` 等多数条目
+    /// 都没有声明 default，全都会被兜底成 `high`）。
+    pub default_declared: bool,
+}
+
+/// 查某个模型的档位能力；模型不在表中返回 `None`。
+///
+/// ## 为什么**不**回落到全局静态表之外
+///
+/// 档位表是按 region 分的两张（见 [`static_effort_cap`]），同一模型名在两域
+/// 的可用档位可能完全不同（`deepseek-v4.1-flash` CN 三档 / Global 仅 high）。
+/// 这里**只查本域那张表**，不在缺失时跨域回落 —— 跨域回落会把 Global 的档位
+/// 标到 CN 的模型上，正是上游刻意用两张表规避的错误。
+pub fn lookup_effort_capability(region: Region, model: &str) -> Option<ModelEffortCapability> {
+    let spec = static_effort_cap(region).get(model.trim())?;
+
+    // 支持档位按强度升序排列，让「low high max」这类展示有稳定顺序，
+    // 不随 HashMap / Vec 的原始书写顺序变化。
+    let mut efforts = spec.efforts.clone();
+    efforts.sort_by_key(|effort| effort_rank(effort).unwrap_or(u8::MAX));
+
+    let default_declared = match spec.default_effort.as_deref() {
+        Some(value) => !value.is_empty(),
+        None => false,
+    };
+
+    Some(ModelEffortCapability {
+        efforts,
+        default_effort: lookup_default_effort(region, model),
+        default_declared,
+    })
+}
+
 /// 取该模型在静态表中的默认档位；未声明则回落 [`DEFAULT_DEEPSEEK_EFFORT`]。
 pub fn lookup_default_effort(region: Region, model: &str) -> String {
     static_effort_cap(region)
@@ -308,5 +355,69 @@ mod tests {
         assert!(contains_effort(&efforts, "high"));
         assert!(!contains_effort(&efforts, "HIGH"));
         assert!(!contains_effort(&efforts, "max"));
+    }
+
+    #[test]
+    fn capability_returns_none_for_unknown_model() {
+        assert_eq!(lookup_effort_capability(Region::Cn, "not-a-model"), None);
+        assert_eq!(lookup_effort_capability(Region::Global, "not-a-model"), None);
+    }
+
+    #[test]
+    fn capability_sorts_efforts_by_strength() {
+        // CN 表里 deepseek-v4-pro 写作 ["low","high","xhigh"]，本就是升序；
+        // 这里断言的是**排序规则生效**而非恰好原样 —— 用一条书写顺序会被打乱的
+        // 反例更能说明问题（glm-5.2 写作 ["high","xhigh"]，升序后仍是原样，
+        // 因此另取一条含 max 的验证 max 排在最后）。
+        let cap = lookup_effort_capability(Region::Cn, "glm-5.3").unwrap();
+        assert_eq!(cap.efforts, vec!["low", "high", "max"]);
+
+        let cap = lookup_effort_capability(Region::Cn, "deepseek-v4-pro").unwrap();
+        assert_eq!(cap.efforts, vec!["low", "high", "xhigh"], "xhigh 必须排在 high 之后");
+
+        // Global 的 GPT 系：low/medium/high/xhigh/max，强度序必须严格递增
+        let cap = lookup_effort_capability(Region::Global, "gpt-5.6-sol").unwrap();
+        let ranks: Vec<u8> = cap.efforts.iter().filter_map(|e| effort_rank(e)).collect();
+        assert!(ranks.windows(2).all(|w| w[0] < w[1]), "档位必须按强度升序");
+    }
+
+    #[test]
+    fn capability_reports_whether_default_was_declared() {
+        // 声明了 default 的：default_declared = true，值取自表
+        let cap = lookup_effort_capability(Region::Cn, "deepseek-v4.1-flash").unwrap();
+        assert_eq!(cap.default_effort, "high");
+        assert!(cap.default_declared, "表里写了 Some(\"high\")");
+
+        // 未声明 default 的：default_declared = false，值兜底成 high
+        let cap = lookup_effort_capability(Region::Cn, "deepseek-v4-flash").unwrap();
+        assert_eq!(cap.default_effort, "high");
+        assert!(!cap.default_declared, "表里是 None，不得当作上游声明值");
+
+        let cap = lookup_effort_capability(Region::Cn, "kimi-k3-1").unwrap();
+        assert_eq!(cap.default_effort, "high", "未声明 → 兜底 high");
+        assert!(!cap.default_declared);
+    }
+
+    #[test]
+    fn capability_never_falls_back_across_regions() {
+        // deepseek-v4.1-flash 在 CN 有 low/high/max、在 Global 仅 high。
+        // 查 CN 拿到的一定是三档，绝不能因为「Global 也查得到」而串味。
+        let cn = lookup_effort_capability(Region::Cn, "deepseek-v4.1-flash").unwrap();
+        assert_eq!(cn.efforts.len(), 3);
+
+        let global = lookup_effort_capability(Region::Global, "deepseek-v4.1-flash").unwrap();
+        assert_eq!(global.efforts, vec!["high"], "Global 仅 high");
+
+        // CN 专有模型在 Global 查不到（不跨域回落）
+        assert_eq!(lookup_effort_capability(Region::Global, "kimi-k3-1"), None);
+        // Global 专有模型在 CN 也查不到
+        assert_eq!(lookup_effort_capability(Region::Cn, "gpt-5.6-sol"), None);
+    }
+
+    #[test]
+    fn capability_accepts_surrounding_whitespace() {
+        // 模型名来自上游，可能带空白；trim 后仍应命中（与 lookup_default_effort 同口径）
+        let cap = lookup_effort_capability(Region::Cn, "  glm-5.3  ").unwrap();
+        assert_eq!(cap.efforts, vec!["low", "high", "max"]);
     }
 }

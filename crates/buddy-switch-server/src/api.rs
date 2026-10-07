@@ -152,6 +152,10 @@ fn api_routes() -> Router {
         .route("/api/gateway/keys/revoke", post(api_gateway_revoke_key))
         .route("/api/gateway/keys/delete", post(api_gateway_delete_key))
         .route("/api/gateway/models", get(api_gateway_models))
+        // 模型档位能力（`reasoning_effort` 的支持档位与默认档）。
+        // 与 `/models` 分开：那一条是**上游目录**（会变），这一条是**静态能力表**
+        // （随版本走、与账号无关），两者生命周期不同，混在一条里会让缓存语义变糊。
+        .route("/api/gateway/efforts", get(api_gateway_efforts))
         .route(
             "/api/gateway/models/refresh",
             post(api_gateway_refresh_models),
@@ -1215,6 +1219,37 @@ async fn api_gateway_models(RawQuery(query): RawQuery) -> Response {
     let state = crate::gateway_host::shared_state();
     let snapshot = state.catalogs.current(region);
     json_ok(serde_json::to_value(snapshot).unwrap_or(Value::Null))
+}
+
+/// GET /api/gateway/efforts —— 本区域**静态档位能力表**（全量）。
+///
+/// 返回 `{ "<模型名>": { efforts: [...], default_effort, default_declared }, ... }`。
+///
+/// ## 为什么整表返回，而不是按模型逐个查
+///
+/// 表是**编译期常量**（见 `buddy_switch_gateway::outbound::effort`），无论几个模型
+/// 都是一次遍历，且模型清单一次就要渲染几十条 —— 逐模型查会变成几十次跨进程调用。
+/// 一次性把整表给前端，由前端按模型名查表，是这一层的正确用法。
+///
+/// ## 为什么与 `/models` 分开
+///
+/// `/models` 是**上游目录**（随账号刷新、可能失败、有缓存时间）；本表是**静态能力**
+/// （编译进二进制、永不变、不依赖账号）。混进同一条响应会让「刷不刷新」语义变糊，
+/// 也会让上游目录缺失时连档位都拿不到。
+async fn api_gateway_efforts(RawQuery(query): RawQuery) -> Response {
+    let region = parse_region(query_value(query.as_deref(), "region").as_deref());
+    let table = buddy_switch_gateway::outbound::effort::static_effort_cap(region);
+    let mut out = serde_json::Map::new();
+    for model in table.keys() {
+        if let Some(capability) = buddy_switch_gateway::lookup_effort_capability(region, model) {
+            // 序列化失败在结构体上是不可达的（字段全是 String / Vec<String> / bool），
+            // 真失败也**跳过该条**而不是整表 500 —— 少一个模型的档位远好过整页报错。
+            if let Ok(value) = serde_json::to_value(&capability) {
+                out.insert((*model).to_string(), value);
+            }
+        }
+    }
+    json_ok(Value::Object(out))
 }
 
 async fn api_gateway_refresh_models(Json(body): Json<Value>) -> Response {

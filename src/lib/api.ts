@@ -22,6 +22,7 @@ import type {
   TokenStatistics,
   CopyResult,
   MigrateResult,
+  EffortCapabilityTable,
   GatewayConfig,
   GatewayLogEntry,
   GatewayStatus,
@@ -117,6 +118,7 @@ const DEMO_READ_COMMANDS = new Set([
   "get_switch_config",
   // API 网关只读命令（演示站需返回虚构数据，否则 build:demo 报错）
   "get_gateway_config", "gateway_status", "list_api_keys", "get_gateway_models",
+  "get_gateway_efforts",
   "get_account_strategy", "get_gateway_logs",
   // Trae 分区只读命令（演示站需返回虚构数据，否则 build:demo 报错）。
   // 只登记**只读**命令：写操作（签到 / 增删账号 / 切换 / 重置设备…）一律不进这里，
@@ -216,6 +218,7 @@ const ROUTES: Record<string, Route> = {
   revoke_api_key: { method: "POST", path: "/api/gateway/keys/revoke" },
   delete_api_key: { method: "POST", path: "/api/gateway/keys/delete" },
   get_gateway_models: { method: "GET", path: "/api/gateway/models" },
+  get_gateway_efforts: { method: "GET", path: "/api/gateway/efforts" },
   refresh_gateway_models: { method: "POST", path: "/api/gateway/models/refresh" },
   get_account_strategy: { method: "GET", path: "/api/gateway/strategy" },
   save_account_strategy: { method: "POST", path: "/api/gateway/strategy" },
@@ -972,6 +975,16 @@ export function deleteApiKey(id: string): Promise<{ ok: boolean }> {
 
 export function getGatewayModels(region: Region): Promise<CatalogSnapshot> {
   return call("get_gateway_models", { region });
+}
+
+/**
+ * 取本区域的**全量档位能力表**（模型名 → 支持档位 / 默认档）。
+ *
+ * 与 [`getGatewayModels`] 分开：那条是上游目录（会刷新、依赖账号），
+ * 这条是后端静态能力表（编译期常量、与账号无关），因此**不会**随刷新变化。
+ */
+export function getGatewayEfforts(region: Region): Promise<EffortCapabilityTable> {
+  return call("get_gateway_efforts", { region });
 }
 
 export function refreshGatewayModels(region: Region): Promise<CatalogSnapshot> {

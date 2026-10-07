@@ -308,6 +308,7 @@ pub fn run() {
             commands::revoke_api_key,
             commands::delete_api_key,
             commands::get_gateway_models,
+            commands::get_gateway_efforts,
             commands::refresh_gateway_models,
             commands::get_account_strategy,
             commands::save_account_strategy,

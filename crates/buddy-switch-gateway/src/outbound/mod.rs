@@ -28,7 +28,10 @@ use sha2::{Digest, Sha256};
 use buddy_switch_core::modules::region::Region;
 use buddy_switch_core::modules::upstream::{prepare_chat_body, INTERNATIONAL_SYSTEM_PROMPT};
 
-pub use effort::{adjust_effort, contains_effort, effort_rank, lookup_default_effort, EffortSpec};
+pub use effort::{
+    adjust_effort, contains_effort, effort_rank, lookup_default_effort, lookup_effort_capability,
+    EffortSpec, ModelEffortCapability,
+};
 pub use prompt::{
     rewrite_system_prompt, DegradeGate, PromptMode, PromptSettings, BUILTIN_SYSTEM_PROMPT,
     DEGRADED_SYSTEM_PROMPT,

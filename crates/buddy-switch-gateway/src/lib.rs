@@ -42,6 +42,7 @@ pub use account_strategy::{AccountSelector, AccountStrategy};
 pub use apikey::{ApiKeyRecord, ApiKeyStore};
 pub use error::GatewayError;
 pub use outbound::{OutboundMeta, OutboundOptions};
+pub use outbound::{lookup_effort_capability, ModelEffortCapability};
 pub use rng::Pcg32;
 pub use state::{
     body_limit_bytes, sync_pool_with_accounts, GatewayConfig, GatewayState, GatewayStatusView,

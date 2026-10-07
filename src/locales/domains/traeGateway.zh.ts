@@ -53,7 +53,23 @@ export const zh = {
   "trae.gateway.models.badgeBeta": "Beta",
   "trae.gateway.models.badgeCustom": "自定义",
   "trae.gateway.models.badgeNotServed": "网关不提供",
-  "trae.gateway.models.context": "上下文 {tokens}",
+  // ---- 模型表格（参照 workbuddy2api-panel 的列结构，与 WorkBuddy 模型表逐列对齐）----
+  "trae.gateway.models.tableHint": "表格列出当前客户端缓存里的全部模型（按 function 分组）；「网关不提供」的行不属于该程序位的 function，调用会返回 4001。",
+  "trae.gateway.models.colModel": "模型",
+  "trae.gateway.models.colCredits": "积分倍率",
+  "trae.gateway.models.colDefaultEffort": "默认档",
+  "trae.gateway.models.colEfforts": "支持的思考档位",
+  "trae.gateway.models.colContext": "上下文长度",
+  "trae.gateway.models.colMaxTokens": "最大输出",
+  // Trae 上游清单**没有**倍率字段 —— 这一列恒为「—」，标题要说明是「无此口径」而非「读不到」。
+  "trae.gateway.models.creditNotApplicable": "Trae 上游清单不提供每模型积分倍率（积分按账号积分包计）。",
+  "trae.gateway.models.effortNone": "该模型不在档位表中（上游不支持 reasoning_effort）。",
+  "trae.gateway.models.effortFixed": "固定档：{effort}",
+  "trae.gateway.models.effortDefaultTip": "默认档：{effort}",
+  "trae.gateway.models.effortInferred": "推断",
+  "trae.gateway.models.effortInferredTip": "档位表未声明默认档，这里是后端兜底值，不是上游声明。",
+  "trae.gateway.models.capVision": "视觉",
+  "trae.gateway.models.capNoVision": "纯文本",
 
   // =====================================================================
   // gateway/trae-request-log.tsx —— 请求日志

@@ -718,6 +718,34 @@ export interface CatalogSnapshot {
   note?: string | null;
 }
 
+/**
+ * 单个模型的档位能力（`reasoning_effort` 的支持档位与默认档）。
+ *
+ * 来源是后端**编译期静态表**（`buddy-switch-gateway` 的 `outbound/effort.rs`），
+ * 按区域分 CN / Global 两张 —— 同一模型名在两域的可用档位可能不同
+ * （实测 `deepseek-v4.1-flash` 在 CN 为 `low/high/max`，Global 仅 `high`），
+ * 因此这份数据必须**按 region 取**，不能跨域复用。
+ *
+ * 与 [`CatalogModel`] 分开取：`CatalogModel` 来自**上游目录**（会随刷新变、可能失败），
+ * 本类型来自**静态能力表**（随版本走、与账号无关）。两者生命周期不同。
+ */
+export interface ModelEffortCapability {
+  /** 支持档位，已按强度升序（`off < minimal < low < medium < high < xhigh < max`）。 */
+  efforts: string[];
+  /** 实际生效的默认档位；后端已兜底，永远非空。 */
+  default_effort: string;
+  /**
+   * 上面那个默认档是否为静态表**显式声明**的值。
+   *
+   * `false` 说明它是后端兜底出来的（多数条目都未声明，会兜底成 `high`）——
+   * 展示层应据此加「推断」标记，否则会把兜底值当上游声明值展示。
+   */
+  default_declared: boolean;
+}
+
+/** 某个区域的**全量**档位能力表：模型名 → 能力。 */
+export type EffortCapabilityTable = Record<string, ModelEffortCapability>;
+
 /** 账号选择策略（按 region 各自独立配置）。 */
 export type AccountStrategy =
   | { kind: "current" }

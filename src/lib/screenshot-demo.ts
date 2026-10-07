@@ -1,7 +1,7 @@
 import type {
   AccountMeta, AccountStrategyMap, ApiKeyRecord, AppStatus, AutoRotateConfig, CatalogSnapshot,
   CheckinConfig, CheckinLog, CodeBuddyCliStatus, CodeBuddyCliSwitchResult, CodeBuddyCnIdeStatus, CreditExpiry,
-  CreditOfficialUsageModel, CreditStatistics, GatewayConfig, GatewayLogEntry, GatewayPoolAccount,
+  CreditOfficialUsageModel, CreditStatistics, EffortCapabilityTable, GatewayConfig, GatewayLogEntry, GatewayPoolAccount,
   GatewayStatus, GithubConfig, Region, RotateLog, RotateStatus, ScheduleConfig, TokenStatistics,
   TokenStatsGroup, TokenStatsSource,
   TokenStatsTotals, TravelConfig, TravelStatus,
@@ -669,6 +669,38 @@ function demoCatalog(region: Region): CatalogSnapshot {
     })),
     note: region === "global" ? t("shared.demo.catalog.globalStale") : null,
   };
+}
+
+/**
+ * 演示用的**档位能力表**（`get_gateway_efforts` 的假数据）。
+ *
+ * 取真实 CN / Global 静态表里的几行，好让演示页能同时看到：
+ * - 多档模型（`glm-5.3` → low/high/max）
+ * - 单档模型（`kimi-k3-1` → medium）
+ * - 未声明默认档的模型（`gy3` 一类，`default_declared: false`，展示层会标「推断」）
+ *
+ * ⚠️ 与 `demoCatalog` 的模型名**大小写不同**（后者是 `GLM-5.3` 这类展示名，
+ * 这里是 `glm-5.3` 这类上游 id）—— 这是刻意的：真实链路上档位表按**上游 id**
+ * 匹配，展示层必须用小写 id 去查表。演示数据保持同样的大小写差异，
+ * 才能暴露「拿展示名去查表」这种错（那样会一条都匹配不上）。
+ */
+function demoEffortTable(region: Region): EffortCapabilityTable {
+  const table: EffortCapabilityTable = region === "global"
+    ? {
+        "gpt-5.6-sol": { efforts: ["low", "medium", "high", "xhigh", "max"], default_effort: "high", default_declared: true },
+        "glm-5.3": { efforts: ["low", "high", "max"], default_effort: "high", default_declared: true },
+        "glm-5.2": { efforts: ["high", "xhigh"], default_effort: "high", default_declared: true },
+        "kimi-k3": { efforts: ["medium"], default_effort: "high", default_declared: false },
+        "deepseek-v4.1-flash": { efforts: ["high"], default_effort: "high", default_declared: false },
+      }
+    : {
+        "glm-5.3": { efforts: ["low", "high", "max"], default_effort: "high", default_declared: true },
+        "glm-5.2": { efforts: ["high", "xhigh"], default_effort: "high", default_declared: true },
+        "deepseek-v4-pro": { efforts: ["low", "high", "xhigh"], default_effort: "high", default_declared: true },
+        "kimi-k3-1": { efforts: ["medium"], default_effort: "high", default_declared: false },
+        "hy3": { efforts: ["low", "high"], default_effort: "high", default_declared: true },
+      };
+  return table;
 }
 
 function demoStrategyMap(): AccountStrategyMap {
@@ -1466,6 +1498,7 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
     case "gateway_status": return demoGatewayStatus();
     case "list_api_keys": return { keys: demoApiKeys() };
     case "get_gateway_models": return demoCatalog(args?.region === "global" ? "global" : "cn");
+    case "get_gateway_efforts": return demoEffortTable(args?.region === "global" ? "global" : "cn");
     case "get_account_strategy": return demoStrategyMap();
     case "get_gateway_logs": return { logs: demoGatewayLogs() };
     // ---- Trae 分区（只读；写操作不进这里，由 DemoAction 统一拦截）----
