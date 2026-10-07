@@ -15,13 +15,37 @@
 
 **A multi-account manager for WorkBuddy / TraeWork**: OAuth QR-code sign-in, one-click login-state switching, credit-expiry monitoring with automatic check-in, token usage statistics — and it can expose your model quota to other local tools through an OpenAI / Anthropic compatible endpoint.
 
+> ## ⚠️ This is a fork — please read this section first
+>
+> This repository, [`1rgg/Switch-API`](https://github.com/1rgg/Switch-API), is an
+> **unofficial fork** of
+> [`NextAgentX/trae-workbuddy-switch`](https://github.com/NextAgentX/trae-workbuddy-switch),
+> maintained independently by `1rgg`. It **does not represent upstream**.
+>
+> ### Changes compared with upstream
+>
+> | Change | Description |
+> | --- | --- |
+> | **Model ID shown in the model list** | Displays the `id` you must use when calling the API (e.g. `DeepSeek-V4-Pro` → `deepseek-v4-pro`) as small monospace text after the display name; omitted when identical |
+> | **Credit multiplier shown in the model list** | Renders upstream's `credits` value (`x0.79`, `x0.11 credits`, …) as a colour-coded badge — green for free/cheap, amber for mid, red for expensive; shows `—` when upstream provides none |
+> | **Update source points here** | The client's "check for updates" targets this repository's Releases and uses this repository's own signing key |
+> | **Windows CI build** | Adds `.github/workflows/build-windows.yml`, which builds and publishes a Windows installer automatically on every push to `main` |
+>
+> ### Before you use it
+>
+> - **Download and update**: get releases from [this repository](https://github.com/1rgg/Switch-API/releases/latest). Once you install a build from here, the in-app updater tracks **this** repository and will **not** receive upstream updates.
+> - **Do not mix builds**: this fork and upstream use different update signing keys. Mixing them breaks signature verification and requires a manual uninstall/reinstall.
+> - **Upstream sync**: changes from upstream are merged occasionally, without any timeliness guarantee.
+> - **Reporting issues**: please use [this repository's Issues](https://github.com/1rgg/Switch-API/issues) and **do not** bother the upstream author.
+> - **Licence and disclaimer**: the upstream noncommercial licence and [Disclaimer](docs/DISCLAIMER.en.md) apply unchanged. This fork is likewise an unofficial third-party tool with no affiliation, authorization or endorsement from WorkBuddy, CodeBuddy, Trae / TraeWork or their respective rights holders.
+
 > ⚠️ **Disclaimer**: this project is an **unofficial, third-party tool released under a noncommercial license** (source-available). It is not affiliated with, authorized by, sponsored by or endorsed by WorkBuddy, CodeBuddy, Trae / TraeWork or their respective rights holders. It reads and writes authentication data of third-party clients on your machine, sends automated requests on the schedule you configure, and can forward your model quota to other tools through a local endpoint. Before using it, read the [Disclaimer](docs/DISCLAIMER.en.md) in full, assess the risks yourself and make sure your usage complies with the applicable terms of service.
 
 One interface, three forms:
 
 | Form | How to get it | Notes |
 | --- | --- | --- |
-| **Desktop app** | Download the installer from [GitHub Releases](https://github.com/NextAgentX/trae-workbuddy-switch/releases/latest) | Packaged with Tauri; recommended for daily use |
+| **Desktop app** | Download the installer from [this repository's Releases](https://github.com/1rgg/Switch-API/releases/latest) | Packaged with Tauri; recommended for daily use |
 | **webui (browser)** | Build from source, see [webui form](#webui-form-build-from-source) | The same frontend bundle as the desktop app, served over a local HTTP channel |
 | **Online demo** | [GitHub Pages](https://nextagentx.github.io/trae-workbuddy-switch/) | Read-only demo; accounts, credits and request records are fictional data and all business actions are disabled |
 
@@ -45,7 +69,7 @@ The pages under both sections are **structurally identical, item for item**: Acc
 
 ### Desktop app
 
-Download the installer for your platform from [GitHub Releases](https://github.com/NextAgentX/trae-workbuddy-switch/releases/latest):
+Download the installer from [this repository's Releases](https://github.com/1rgg/Switch-API/releases/latest). CI currently publishes **Windows x64** installers here; other platforms must be built from source:
 
 | Platform | Installer | Installation |
 | --- | --- | --- |
@@ -107,7 +131,7 @@ The webui listens on `127.0.0.1:57890` by default. The interface is identical to
 | Scheduled tasks | Six task types — check-in, Cat Travel, Activity Map, token keep-alive, Back-to-School and Night Owl — each with its own toggle and configurable execution hour |
 | Migrate data on switch | Merge the current account's long-term memory and connector configuration into the target account (same-name entries merged recursively, deduplicated by content), with same-version and cross-version migration supported; the original content is backed up before being rewritten |
 | Permission check | macOS authorization walkthrough (App Management / Full Disk Access drag-to-authorize plus automatic detection) |
-| Auto-update | Check GitHub Releases for new versions; full-package updates are signature-verified (tauri-updater) |
+| Auto-update | Checks **this repository's** Releases for new versions; full-package updates are signature-verified (tauri-updater; public key in `src-tauri/tauri.conf.json`) |
 
 ### TraeWork section
 
@@ -153,7 +177,7 @@ Expose the current account's model quota to other local AI tools (Cursor, Claude
 7. **Connect CodeBuddy CLI**: one-click connect / update authentication on the Accounts page. "Switch CodeBuddy" only updates the default account used by **sessions loaded afterwards**; the currently running session is not switched — reload the session from ACP, or restart CodeBuddy CLI for it to take effect
 8. **Switch CodeBuddy CN IDE**: switch the CN desktop client (www.codebuddy.cn) with one click from an account card. Switching closes and restarts CodeBuddy CN; before the first use, open and sign in to it manually once so that the Keychain Safe Storage entry is created
 9. **Automatic rotation**: Settings → CodeBuddy CLI auto-rotation (policy below)
-10. **Updates**: the app automatically checks the public GitHub Releases and lets you upgrade directly from the bottom-left corner
+10. **Updates**: the app automatically checks **this repository's** Releases and lets you upgrade directly from the bottom-left corner (update packages are signature-verified)
 
 ### TraeWork
 
@@ -351,10 +375,10 @@ This project is licensed under the **[PolyForm Noncommercial License 1.0.0](./LI
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=NextAgentX%2Ftrae-workbuddy-switch&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=1rgg%2FSwitch-API&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=NextAgentX/trae-workbuddy-switch&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=NextAgentX/trae-workbuddy-switch&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=NextAgentX/trae-workbuddy-switch&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=1rgg/Switch-API&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=1rgg/Switch-API&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=1rgg/Switch-API&type=date&legend=top-left" />
  </picture>
 </a>
