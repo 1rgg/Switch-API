@@ -53,6 +53,13 @@ export const zh = {
   "trae.gateway.models.badgeBeta": "Beta",
   "trae.gateway.models.badgeCustom": "自定义",
   "trae.gateway.models.badgeNotServed": "网关不提供",
+  // ---- 「只看网关提供的模型」开关 ----
+  // 默认**关**（保底）：清单来自客户端缓存，是用户唯一一份「上游到底下发了什么」的
+  // 现场证据；不可调的条目被直接抹掉后，用户会以为客户端里根本没有它。
+  // 需要「一张能直接用的清单」时再打开，此时对外语义与 /v1/models 逐条一致。
+  "trae.gateway.models.onlyServed": "只看网关提供的模型",
+  "trae.gateway.models.onlyServedTip": "开启后隐藏「网关不提供」的行（不属于当前程序位 function、或走第三方路由的条目）。",
+  "trae.gateway.models.hiddenCount": "已隐藏 {count} 个网关不提供的模型",
   // ---- 模型表格（参照 workbuddy2api-panel 的列结构，与 WorkBuddy 模型表逐列对齐）----
   "trae.gateway.models.tableHint": "表格列出当前客户端缓存里的全部模型（按 function 分组）；「网关不提供」的行不属于该程序位的 function，调用会返回 4001。",
   "trae.gateway.models.colModel": "模型",

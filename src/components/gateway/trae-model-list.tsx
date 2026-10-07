@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import type { Region, EffortCapabilityTable, ModelEffortCapability } from "@/lib/types";
 import type {
   TraeClientModel,
+  TraeClientModelGroup,
   TraeModelSource,
   TraeVariantId,
 } from "@/lib/trae-types";
@@ -97,6 +98,22 @@ function programRegion(variant: TraeVariantId): Region {
  * 上游独有的口径。留这一列是**列结构对齐**（两页的列可以逐列对读），
  * 而不是去编一个数：Trae 的积分消耗在账号卡的「积分包」里按**包**计，
  * 与「每模型倍率」不是同一种东西，硬凑一个数会误导。
+ *
+ * ## 「网关不提供」的行：默认**保留**（压暗 + 记号），可一键隐藏
+ *
+ * 清单来自客户端缓存，是用户**唯一**一份「上游到底下发了什么」的现场证据。
+ * 那批不属于本程序位 `function` 的条目（实测 `solo_coder` / 第三方路由）
+ * 是**真在客户端里的** —— 直接抹掉会让人以为客户端里根本没有它，
+ * 而实际情况是「有、但本网关这条线调不动」，两者要采取的处置完全不同
+ * （前者去找客户端版本，后者去换程序位或换模型）。
+ *
+ * ⇒ 默认全部保留、压暗并打「网关不提供」记号（`servable === false`）；
+ *   开关打开时才整行隐藏，并**显式写出隐藏了几条** ——
+ *   隐藏而不报数，就是换了种方式的「看不见」。
+ *
+ * 两种模式都**不改数据源**：`gatewayNames` 是后端按 `function` 过滤 + 剔除
+ * `is_bypass` 之后的结果（见 Rust 侧 `payload::servable_entries`），
+ * 前端只做「显不显示」这一层。
  */
 export function TraeModelList({
   sources,
@@ -130,6 +147,16 @@ export function TraeModelList({
    * 因此**不需要** effect 去同步/清理 —— 少一处会在切换瞬间闪一下的中间态。
    */
   const [picked, setPicked] = useState<TraeVariantId | null>(null);
+  /**
+   * 是否隐藏「网关不提供」的行。
+   *
+   * **默认关**（保留全部行，压暗 + 记号）—— 见模块头那节：客户端缓存是用户唯一一份
+   * 「上游下发了什么」的证据，默认隐藏等于把证据藏起来。
+   *
+   * 不落 store / 不落 URL：与 `picked` 同属「本卡片的展示参数」，切页回来复位是可接受的
+   * （且复位到「看得见全部」这个更保守的一侧）。
+   */
+  const [onlyServed, setOnlyServed] = useState(false);
   const active = sources.find((source) => source.variant === picked) ?? sources[0] ?? null;
   const data = active?.data ?? null;
   /** 当前程序位的**网关对外清单** id 集合（见 `TraeModelSource.gatewayNames`）。 */
@@ -182,6 +209,35 @@ export function TraeModelList({
   const total = new Set(groups.flatMap((group) => group.models.map((model) => model.name))).size;
   const loaded = data?.source === "client-cache" && total > 0;
 
+  /**
+   * 实际渲染用的分组。
+   *
+   * 只在开关打开时过滤；`servableNames === null`（网关清单没取到）时**不过滤** ——
+   * 判据缺失就把行删掉，等于把「没读到」当成「不提供」，那是凭空造结论。
+   */
+  const filterable = onlyServed && servableNames !== null;
+  const shownGroups: TraeClientModelGroup[] = filterable
+    ? groups
+        .map((group) => ({
+          ...group,
+          models: group.models.filter((model) => servableNames.has(model.name)),
+        }))
+        .filter((group) => group.models.length > 0)
+    : groups;
+
+  /**
+   * 被隐藏的**去重**条数（不是各行相加 —— 同一模型会在多个分组里重复）。
+   *
+   * 归类时以「该模型在**任一**分组里可服务」为准，与渲染时的逐行过滤口径一致：
+   * 只看某一分组会把它算成「隐藏」，而它在别的分组里其实还在表上。
+   */
+  const hiddenCount = filterable
+    ? total -
+      new Set(
+        shownGroups.flatMap((group) => group.models.map((model) => model.name)),
+      ).size
+    : 0;
+
   return (
     <Card className={cn("gap-0 py-0", className)}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-5 py-3">
@@ -224,6 +280,23 @@ export function TraeModelList({
           <span className="text-xs text-muted-foreground">
             {t("trae.gateway.models.summary", { count: total, model: defaultModel })}
           </span>
+          {/* 「只看网关提供的模型」：判据（`servableNames`）没取到时**不渲染**这个控件 ——
+              一个拨不动任何东西的开关比没有开关更糟。 */}
+          {servableNames !== null && (
+            <label
+              className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground"
+              title={t("trae.gateway.models.onlyServedTip")}
+            >
+              <input
+                type="checkbox"
+                className="size-3.5 accent-primary"
+                checked={onlyServed}
+                onChange={(event) => setOnlyServed(event.target.checked)}
+                data-only-served={onlyServed ? "on" : "off"}
+              />
+              {t("trae.gateway.models.onlyServed")}
+            </label>
+          )}
           <DemoAction>
             <Button variant="ghost" size="sm" onClick={() => onRefresh()} disabled={refreshing}>
               {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
@@ -268,6 +341,11 @@ export function TraeModelList({
                   : t("trae.gateway.models.gatewayCount", { count: gatewayCount })}
               </span>
             )}
+            {hiddenCount > 0 && (
+              <span className="text-amber-600">
+                {t("trae.gateway.models.hiddenCount", { count: hiddenCount })}
+              </span>
+            )}
           </div>
         )}
 
@@ -279,7 +357,7 @@ export function TraeModelList({
           <>
             <p className="mb-3 text-xs text-muted-foreground">{t("trae.gateway.models.tableHint")}</p>
             <div className="space-y-5">
-              {groups.map((group) => (
+              {shownGroups.map((group) => (
                 <section key={group.function} className="space-y-2">
                   <div className="flex items-center gap-2">
                     <code className="font-mono text-xs text-muted-foreground">{group.function}</code>

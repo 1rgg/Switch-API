@@ -45,6 +45,13 @@ export const en = {
   "trae.gateway.models.badgeBeta": "Beta",
   "trae.gateway.models.badgeCustom": "Custom",
   "trae.gateway.models.badgeNotServed": "Not served",
+  // ---- "only served models" toggle ----
+  // Defaults to **off**: the client cache is the user's only on-disk evidence of what
+  // upstream actually pushed; silently dropping entries makes them think it was never there.
+  // Turn it on when a directly usable list is wanted — then it matches /v1/models row for row.
+  "trae.gateway.models.onlyServed": "Only models the gateway serves",
+  "trae.gateway.models.onlyServedTip": "Hide rows the gateway does not serve (outside the current program's function, or third-party routes).",
+  "trae.gateway.models.hiddenCount": "{count} unservable model(s) hidden",
   // ---- model table (mirrors workbuddy2api-panel's columns, column-for-column with the WorkBuddy table) ----
   "trae.gateway.models.tableHint": "The table lists every model in this client's cache, grouped by function; rows marked \"Not served\" fall outside this client's function and return 4001.",
   "trae.gateway.models.colModel": "Model",
