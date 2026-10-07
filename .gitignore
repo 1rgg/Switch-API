@@ -76,3 +76,8 @@ _*.cjs
 /release-notes.md
 
 .key
+
+# updater 签名密钥（务必不要提交私钥；公钥见 src-tauri/tauri.conf.json）
+*.key
+*.key.pub
+.updater-keys/

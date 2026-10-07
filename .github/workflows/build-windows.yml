@@ -1,42 +1,69 @@
 name: build-windows
 
 # =============================================================================
-# Windows 安装包构建（本仓库自用）
+# Windows 安装包构建 + 签名 + 发布 Release（本仓库自用）
 #
 # ## 为什么单独一个工作流，而不是直接用上游的 build.yml
 #
-# 上游 `build.yml` 与本仓库有三个不兼容的硬依赖：
+# 上游 `build.yml` 与本仓库有几个硬依赖，直接抄过来跑不起来：
 #
-#   1. `src-tauri/tauri.conf.json` 的 `createUpdaterArtifacts: true` 让 updater
-#      签名私钥成为**打包硬依赖**。没有 `TAURI_SIGNING_PRIVATE_KEY` 时，
-#      `tauri build` 会先跑完 ~5 分钟 Rust 编译，最后才抛
-#      "A public key has been found, but no private key" 并 exit 1。
-#      上游自己也知道这点，所以专门加了 Preflight 步骤提前拦 —— 但在本仓库
-#      没有那把密钥，那个 Preflight 必然失败。
-#
-#   2. 上游只在 `push: tags: ["v*"]` 时发 GitHub Release，且要往 npmjs
+#   1. 上游只在 `push: tags: ["v*"]` 时发 GitHub Release，且要往 npmjs
 #      发布平台包（`publish-platform` / `publish-main`），需要 `NPM_TOKEN`。
-#      本仓库只要一个能下载的安装包，不需要这些。
+#      本仓库只要一个能下载、能被客户端自动更新的安装包，不需要这些。
+#
+#   2. 上游内嵌了官方的 updater 签名私钥（通过 Secrets），公钥硬编码在
+#      tauri.conf.json。本仓库换了**自己的**密钥对（见下方「签名密钥」），
+#      所以必须走自己的签名流程。
 #
 #   3. `pages.yml` 部署的是官方只读演示站，与本仓库无关。
 #
 # 因此这里**不动上游的 build.yml / pages.yml**（保持它们原样，以后同步上游
-# 不会冲突），另加这一份只做 Windows 安装包、不签名、不发 Release 的工作流。
-# 本工作流通过下方 `patch` 步骤临时关掉 `createUpdaterArtifacts`，
-# **不改仓库里 committed 的 tauri.conf.json**（那是上游签名链的一部分，
-# 改了会与上游漂移，也会让本地打包行为不一致）。
+# 不会冲突），另加这一份工作流。
 #
-# 产物：Artifacts 里的 `BuddySwitch-windows-installer`，解压即得
-# `BuddySwitch_<version>_x64-setup.exe`。
+# ## 签名密钥（客户端自动更新的前提）
+#
+# `src-tauri/tauri.conf.json` 里 `createUpdaterArtifacts: true`，会让 updater
+# 签名私钥成为**打包硬依赖**。缺少密钥时 `tauri build` 会先跑完 ~5 分钟 Rust
+# 编译，最后才抛 "A public key has been found, but no private key" 并 exit 1。
+#
+# 本仓库需要配置这个 Repository Secret：
+#
+#   TAURI_SIGNING_PRIVATE_KEY   —— 私钥**文件内容**（不是路径）
+#                                  本机生成于 .updater-keys/buddy-switch-updater.key
+#                                  用 `npx tauri signer generate -w <path>` 生成
+#
+# 如果生成时设了密码，再加一个 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`；
+# 本仓库当前密钥**无密码**，因此不传该变量（传空串也可）。
+#
+# 公钥必须与私钥配对，已写死在 tauri.conf.json 的 plugins.updater.pubkey。
+# ⚠️ 私钥一旦丢失，已装客户端将无法再收到更新，只能手动重装。
+#
+# ## 产物与发布
+#
+# 构建产出（bundle/nsis/）：
+#   - BuddySwitch_<version>_x64-setup.exe       安装包（给人下载）
+#   - BuddySwitch_<version>_x64-setup.nsis.zip  签名载体（tauri-updater 下载这个）
+#   - *.sig                                     以上压缩包的 minisign 签名
+#
+# 工作流会生成 `latest.json`（tauri-updater 的更新清单），然后：
+#   1. 始终上传到 Actions Artifacts（保留 30 天，方便随时取包）
+#   2. push / 手动触发时创建/更新 GitHub Release（tag = 应用版本号），
+#      这样客户端「检查更新」就能通过 releases/latest/download/latest.json 拿到
 #
 # ## 触发方式
 #
-#   - 手动：Actions → build-windows → Run workflow（推荐，第一次就用这个）
-#   - push 到 main 且改动 src-tauri / crates / src 时自动跑
+#   - 手动：Actions → build-windows → Run workflow
+#   - push 到 main 且改动 src-tauri / crates / src 等时自动跑
+#   - 也可手动打 tag（v*）触发（走 tag 时会用 tag 名做下发版本）
 # =============================================================================
 
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "是否创建/更新 GitHub Release（供客户端自动更新）"
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -51,9 +78,11 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/build-windows.yml"
+    tags: ["v*"]
 
+# 发布 Release 需要写权限
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -87,19 +116,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # 关掉 updater 签名产物 —— 见文件头的「为什么」。
-      # 只改工作区里的这份文件，绝不提交回仓库。
-      - name: Disable updater signing artifacts
+      # 提前校验签名密钥是否就位。若不就位，这里立刻失败并给出明确指引，
+      # 而不是等 5 分钟编译完才报错（省 5 分钟排队时间）。
+      - name: Preflight — 检查签名密钥
         shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
-          node -e '
-            const fs = require("fs");
-            const p = "src-tauri/tauri.conf.json";
-            const conf = JSON.parse(fs.readFileSync(p, "utf8"));
-            conf.bundle.createUpdaterArtifacts = false;
-            fs.writeFileSync(p, JSON.stringify(conf, null, 2) + "\n");
-            console.log("createUpdaterArtifacts =>", conf.bundle.createUpdaterArtifacts);
-          '
+          if [ -z "$KEY" ]; then
+            echo "::error::缺少 Repository Secret：TAURI_SIGNING_PRIVATE_KEY"
+            echo "::error::请在 Settings → Secrets and variables → Actions 中新增该 Secret，"
+            echo "::error::值为 .updater-keys/buddy-switch-updater.key 的完整文件内容。"
+            exit 1
+          fi
+          echo "OK: 签名密钥已配置（${#KEY} 字符）"
 
       - name: Install frontend deps
         run: npm ci
@@ -108,30 +138,75 @@ jobs:
         run: npm run build
 
       # NSIS 安装包。tauri CLI 会按需自动下载 NSIS 与 WiX。
-      - name: Build Tauri app (NSIS)
+      # createUpdaterArtifacts 保持 true —— 这样才能产出 .nsis.zip + .sig。
+      - name: Build Tauri app (NSIS, signed)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis
 
-      - name: Locate installer
+      # 收集产物、生成 latest.json 更新清单
+      - name: Collect artifacts & generate latest.json
         shell: bash
         run: |
+          set -euo pipefail
           VER=$(node -p "require('./package.json').version")
-          echo "package.json version: $VER"
+          # tag 触发时用 tag 名（去掉可能的前缀 v）作为下发版本
+          REF="${{ github.ref }}"
+          if [[ "$REF" == refs/tags/* ]]; then
+            VER="${REF#refs/tags/}"
+            VER="${VER#v}"
+          fi
+          echo "release version: $VER"
+          echo "VER=$VER" >> "$GITHUB_ENV"
+
           ROOT="target/x86_64-pc-windows-msvc/release/bundle/nsis"
           echo "--- bundle dir ---"
-          find "$ROOT" -type f 2>/dev/null | sort || true
-          SETUP=$(find "$ROOT" -type f -name '*-setup.exe' | head -1)
-          if [ -z "$SETUP" ]; then
-            echo "::error::未找到 NSIS 安装包（*-setup.exe）"
-            exit 1
-          fi
-          echo "installer: $SETUP"
+          find "$ROOT" -maxdepth 1 -type f 2>/dev/null | sort || true
+
           mkdir -p out
+          SETUP=$(find "$ROOT" -maxdepth 1 -type f -name '*-setup.exe' | head -1)
+          [ -n "$SETUP" ] || { echo "::error::未找到 NSIS 安装包（*-setup.exe）"; exit 1; }
           cp "$SETUP" out/
-          # 同时保留裸 exe（未打进安装包的桌面主程序），便于免安装试跑
+
+          # tauri-updater 实际下载的是 .nsis.zip，而不是 .exe
+          ZIP=$(find "$ROOT" -maxdepth 1 -type f -name '*-setup.nsis.zip' | head -1)
+          [ -n "$ZIP" ] || { echo "::error::未找到签名包（*-setup.nsis.zip），签名是否失败？"; exit 1; }
+          SIG=$(find "$ROOT" -maxdepth 1 -type f -name '*-setup.nsis.zip.sig' | head -1)
+          [ -n "$SIG" ] || { echo "::error::未找到签名文件（*.sig）"; exit 1; }
+          cp "$ZIP" out/
+          cp "$SIG" out/
+
+          # 裸 exe（未打进安装包的桌面主程序），便于免安装试跑
           APP_EXE="target/x86_64-pc-windows-msvc/release/BuddySwitch.exe"
-          if [ -f "$APP_EXE" ]; then
-            cp "$APP_EXE" out/
-          fi
+          [ -f "$APP_EXE" ] && cp "$APP_EXE" out/ || true
+
+          # ---- latest.json：tauri-updater 的更新清单 ----
+          # URL 指向本仓库该 tag 的 Release 资产（用 tag 名而非 latest，
+          # 避免 latest 重定向带来的解析差异；客户端拿到后可正常下载）
+          ZIP_NAME=$(basename "$ZIP")
+          SIG_CONTENT=$(cat "$SIG")
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          node -e '
+            const fs = require("fs");
+            const [ver, repo, zipName, sig, pubDate, notes] = process.argv.slice(1);
+            const manifest = {
+              version: ver,
+              notes: notes,
+              pub_date: pubDate,
+              platforms: {
+                "windows-x86_64": {
+                  signature: sig,
+                  url: `https://github.com/${repo}/releases/download/${ver}/${zipName}`,
+                },
+              },
+            };
+            fs.writeFileSync("out/latest.json", JSON.stringify(manifest, null, 2) + "\n");
+            console.log(JSON.stringify(manifest, null, 2));
+          ' "$VER" "${{ github.repository }}" "$ZIP_NAME" "$SIG_CONTENT" "$PUB_DATE" \
+            "Buddy Switch $VER（二次开发分支 1rgg/Switch-API）"
+
+          echo "--- out/ ---"
           ls -la out/
 
       - uses: actions/upload-artifact@v4
@@ -139,5 +214,41 @@ jobs:
           name: BuddySwitch-windows-installer
           path: out/
           if-no-files-found: error
-          # 安装包通常几十 MB，留 30 天够用
           retention-days: 30
+
+      # 创建 / 更新 Release。客户端「检查更新」读取的
+      # releases/latest/download/latest.json 就来自这里。
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' || inputs.release == true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v${{ env.VER }}"
+          echo "publishing tag: $TAG"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG 已存在，改为覆盖上传资产"
+            gh release upload "$TAG" out/* --clobber
+          else
+            gh release create "$TAG" \
+              --title "Buddy Switch ${{ env.VER }}" \
+              --notes "Buddy Switch \`${{ env.VER }}\`（二次开发分支 [1rgg/Switch-API](https://github.com/${{ github.repository }})）
+
+          ## 下载
+
+          - \`BuddySwitch_${{ env.VER }}_x64-setup.exe\` —— Windows x64 安装包，双击安装
+          - \`latest.json\` / \`*.nsis.zip\` / \`*.sig\` —— 客户端自动更新所需，普通用户不用管
+
+          ## 自动更新
+
+          已安装本分支客户端的用户，在应用左下角点击检查更新即可升级到本版本。
+
+          > ⚠️ 本分支与上游 \`NextAgentX/trae-workbuddy-switch\` 使用**不同的更新签名密钥**，两者产物不可混装。
+          > 本版本包含的二次开发改动：模型列表显示**模型 ID** 与**积分倍率**。" \
+              out/*
+          fi
+
+          echo "--- release assets ---"
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"'

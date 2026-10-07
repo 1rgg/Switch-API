@@ -15,13 +15,36 @@
 
 **WorkBuddy / TraeWork 多账号管理工具**：OAuth 扫码登录、一键切换登录态、积分到期监控与自动签到、Token 用量统计，并可以把模型额度以 OpenAI / Anthropic 兼容接口提供给本机其它工具。
 
+> ## ⚠️ 这是二次开发分支，请先读完本节
+>
+> 本仓库 [`1rgg/Switch-API`](https://github.com/1rgg/Switch-API) 是
+> [`NextAgentX/trae-workbuddy-switch`](https://github.com/NextAgentX/trae-workbuddy-switch)
+> 的**非官方二次开发（fork）版本**，由 `1rgg` 独立维护，**不代表上游立场**。
+>
+> ### 相比上游的改动
+>
+> | 改动 | 说明 |
+> | --- | --- |
+> | **模型列表显示模型 ID** | 在模型名后以等宽小字显示调用 API 时要填的 `id`（如 `DeepSeek-V4-Pro` → `deepseek-v4-pro`）；同名时不重复显示 |
+> | **模型列表显示积分倍率** | 以彩色徽章展示上游的 `credits` 倍率（`x0.79`、`x0.11 credits` 等），按倍率高低分档着色：免费/省钱绿、中等黄、昂贵红；上游未提供时显示 `—` |
+> | **更新源改为本仓库** | 客户端「检查更新」指向本仓库 Releases，并使用本仓库自己的签名密钥 |
+> | **Windows CI 构建** | 新增 `.github/workflows/build-windows.yml`，推送 `main` 后自动构建并发布 Windows 安装包 |
+>
+> ### 使用须知
+>
+> - **下载与更新**：请前往本仓库 [Releases](https://github.com/1rgg/Switch-API/releases/latest)。安装本仓库的版本后，客户端内的「检查更新」会跟踪本仓库，**不会**收到上游更新。
+> - **不要混装**：本分支与上游产物使用不同的更新签名密钥。混装会导致自动更新校验失败，需要手动卸载重装。
+> - **同步上游**：本分支会不定期合并上游改动，但不保证及时。
+> - **问题反馈**：请提到[本仓库 Issues](https://github.com/1rgg/Switch-API/issues)，**不要**打扰上游作者。
+> - **协议与免责**：沿用上游的非商业许可与[免责声明](docs/DISCLAIMER.md)。本分支同样是非官方第三方工具，与 WorkBuddy、CodeBuddy、Trae / TraeWork 及其权利人无任何隶属、授权或背书关系。
+
 > ⚠️ **免责声明**：本项目是**非官方的第三方源码公开工具**（source-available，非商业许可），与 WorkBuddy、CodeBuddy、Trae / TraeWork 及其各自权利人不存在隶属、授权或背书关系。它会读写本机第三方客户端的认证数据、按你的配置自动发起请求，并可将你的模型额度通过本地接口转发给其它工具。使用前请完整阅读[免责声明](docs/DISCLAIMER.md)，自行评估风险并确保使用方式符合相关服务条款。
 
 同一套界面提供三种形态：
 
 | 形态 | 获取方式 | 说明 |
 | --- | --- | --- |
-| **桌面 App** | 从 [GitHub Releases](https://github.com/NextAgentX/trae-workbuddy-switch/releases/latest) 下载安装包 | Tauri 打包，推荐日常使用 |
+| **桌面 App** | 从 [本仓库 Releases](https://github.com/1rgg/Switch-API/releases/latest) 下载安装包 | Tauri 打包，推荐日常使用 |
 | **webui（浏览器）** | 从源码构建，见 [webui 形态](#webui-形态源码构建) | 与桌面 App 同一份前端产物，走本地 HTTP 通道 |
 | **在线演示** | [GitHub Pages](https://nextagentx.github.io/trae-workbuddy-switch/) | 只读演示；账号、积分与请求记录均为虚构数据，所有业务操作已禁用 |
 
@@ -46,7 +69,7 @@
 
 ### 桌面 App
 
-前往 [GitHub Releases](https://github.com/NextAgentX/trae-workbuddy-switch/releases/latest) 下载对应平台的安装包：
+前往 [本仓库 Releases](https://github.com/1rgg/Switch-API/releases/latest) 下载安装包。本仓库目前由 CI 产出 **Windows x64** 安装包，其余平台需自行从源码构建：
 
 | 平台 | 安装包 | 安装方式 |
 | --- | --- | --- |
@@ -108,7 +131,7 @@ webui 默认监听 `127.0.0.1:57890`。界面与桌面 App 完全一致——同
 | 定时任务排程 | 六类任务——签到、猫猫旅行、活跃地图、token 保活、开学季、夜猫子——各自可独立开关并配置执行小时 |
 | 切换时迁移数据 | 把当前账号的长期记忆（Memory）与连接器配置合并到目标账号（同名条目递归合并、按内容去重），支持同版本与跨版本迁移；改写前自动备份原文 |
 | 权限检测 | macOS 授权引导（App 管理 / 完全磁盘访问拖拽授权 + 自动检测） |
-| 自动更新 | 检查 GitHub Releases 新版本；整包更新经签名校验（tauri-updater） |
+| 自动更新 | 检查**本仓库** Releases 新版本；整包更新经签名校验（tauri-updater，公钥见 `src-tauri/tauri.conf.json`） |
 
 ### TraeWork 分区
 
@@ -154,7 +177,7 @@ webui 默认监听 `127.0.0.1:57890`。界面与桌面 App 完全一致——同
 7. **接入 CodeBuddy CLI**：账号页一键接入 / 更新认证。「切换 CodeBuddy」只更新**后续加载会话**使用的默认账号，当前运行会话不会切换——请由 ACP 重新加载会话，或重启 CodeBuddy CLI 后生效
 8. **切换 CodeBuddy CN IDE**：账号卡片一键切换国内版桌面客户端（www.codebuddy.cn）。切换会关闭并重启 CodeBuddy CN；首次使用前请先手动打开并登录一次以生成 Keychain Safe Storage
 9. **自动轮换**：设置 → CodeBuddy CLI 自动轮换（策略见下）
-10. **更新**：应用自动检查公开 GitHub Releases，发现新版本后可在左下角直接升级
+10. **更新**：应用自动检查**本仓库** Releases，发现新版本后可在左下角直接升级（更新包经签名校验）
 
 ### TraeWork
 
@@ -352,10 +375,10 @@ npm/                     # npm 包（**尚未发布**）：主包 @nextagentx/bu
 
 ## Star 趋势
 
-<a href="https://www.star-history.com/?repos=NextAgentX%2Ftrae-workbuddy-switch&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=1rgg%2FSwitch-API&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=NextAgentX/trae-workbuddy-switch&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=NextAgentX/trae-workbuddy-switch&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=NextAgentX/trae-workbuddy-switch&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=1rgg/Switch-API&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=1rgg/Switch-API&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=1rgg/Switch-API&type=date&legend=top-left" />
  </picture>
 </a>
