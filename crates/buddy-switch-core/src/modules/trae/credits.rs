@@ -172,11 +172,11 @@ fn trace_id() -> String {
 /// - HTTP 错误码（4xx/5xx）**不**转成 `Err`，因为签到需要按状态码分类错误
 ///   （401 → 会话失效、429 → 限频），调用方必须拿到原始状态码。
 ///
-/// # ⚠️ 未验证的线索：请求体可能是空的（`{}`）
+/// # ✅ 已实测（2026-10-07）：请求体 `{}` 与 `{require_usage,full_data}` 等价
 ///
-/// 这里对所有路径都发 `{}`（沿用参考实现）。但**真实 Trae 客户端的请求体不是空的** ——
-/// 从客户端自身的缓存里翻出了它自动生成的 API SDK（`%APPDATA%\TRAE SOLO CN\Cache\Cache_Data\f_*`），
-/// 里面写着：
+/// 这里对所有路径都发 `{}`（沿用参考实现）。历史上怀疑过真实 Trae 客户端的请求体
+/// 不是空的 —— 从客户端自身的缓存里翻出它自动生成的 API SDK
+/// （`%APPDATA%\TRAE SOLO CN\Cache\Cache_Data\f_*`）里写着：
 ///
 /// ```js
 /// GetIdeUserEntUsageV2(e, t) {
@@ -188,31 +188,18 @@ fn trace_id() -> String {
 /// }
 /// ```
 ///
-/// 而且同一份缓存里有个**真实调用点**，默认参数是
-/// `{require_usage: true, full_data: true}`，`queryFn` 里也恒为 `full_data: true`：
-///
-/// ```js
-/// function tp(e) {
-///   let t = arguments.length > 1 && void 0 !== arguments[1]
-///       ? arguments[1] : {require_usage: !0, full_data: !0};
-///   return e({url: "/trae/api/v2/pay/user_current_entitlement_list",
-///             method: "POST", data: t})
-/// }
-/// ```
-///
-/// **也就是说真实客户端总是要求 `full_data: true`，而本模块一个字段都不发。**
+/// 且同一份缓存里的真实调用点默认 `{require_usage: true, full_data: true}`。
 /// 若服务端把 `full_data` 默认成 `false`，响应里就不会有完整的
 /// `user_entitlement_pack_list`，[`calc_remaining_credits`] 会直接报
 /// 「响应中缺少 user_entitlement_pack_list」。
 ///
-/// **为什么明知可疑却还没改**：本机切换器的 Trae 账号库是空的
-/// （`checkin_accounts.json` 不存在），**这条路径从未对真实上游跑通过**，
-/// 因此"发 `{}` 能用"这个前提本身就没人验证过。同时我也**没有实测证据**
-/// 证明 `full_data: true` 才正确。改线上协议不能靠推理。
+/// **实测结论（用真实账号直连 `api.trae.cn` 对照两次请求）**：
+/// `{}` 与 `{"require_usage":true,"full_data":true}` **返回完全一致**
+/// —— 都是 HTTP 200，都带 25 个 `user_entitlement_pack_list` 元素，
+/// `usage_summary` 完全相同。即**服务端对这两个字段有合理默认，`{}` 没问题**，
+/// [`calc_remaining_credits`] 不会因此报错。故**保持发 `{}` 不变**。
 ///
-/// **下次有可用账号时的第一步**：先按原样打一次，看响应有没有
-/// `user_entitlement_pack_list`；若没有，再改成
-/// `{"require_usage": true, "full_data": true}` 复测。别凭猜直接改。
+/// 复现脚本：`tests/trae_usage_live_probe.rs`（`#[ignore]`，需真实凭据）。
 pub async fn post_json(path: &str, jwt_value: &str, device: &DeviceEntry) -> (u16, String) {
     post_json_for(TraeVariant::default(), path, jwt_value, device).await
 }
@@ -380,14 +367,39 @@ pub fn parse_credit_packages(packs: &[Value], now_ts: i64) -> Vec<CreditPackage>
             && expire_at
                 .map(|expire| expire - now_ts <= EXPIRING_SOON_SECS)
                 .unwrap_or(false);
-        let package_name = base
-            .and_then(|info| {
-                info.get("package_name")
-                    .or_else(|| info.get("name"))
-                    .and_then(Value::as_str)
+        // ## ★ 包名的真实位置（2026-10-07 实测修正）
+        //
+        // 旧实现只读 `entitlement_base_info.package_name` / `.name` —— 实测两者**恒为
+        // `null`**，于是账号卡的包名一直为空。真实位置有两处，按可读性优先：
+        //
+        // 1. 顶层 `display_desc`（人类可读，如「签到奖励」「每月登录赠送」「免费」）；
+        // 2. `entitlement_base_info.product_extra.package_extra.package_name`（机读名）。
+        //
+        // 保留对 `entitlement_base_info.package_name` / `.name` 的兜底，
+        // 便于历史构造数据与上游再次改结构时不至于静默丢名。
+        let package_name = pack
+            .get("display_desc")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .or_else(|| {
+                base.and_then(|info| {
+                    info.get("package_name")
+                        .or_else(|| info.get("name"))
+                        .and_then(Value::as_str)
+                })
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
             })
-            .map(str::to_string)
-            .filter(|text| !text.trim().is_empty());
+            .or_else(|| {
+                base.and_then(|info| info.get("product_extra"))
+                    .and_then(|extra| extra.get("package_extra"))
+                    .and_then(|extra| extra.get("package_name"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+            })
+            .map(str::to_string);
         let package_code = base
             .and_then(|info| {
                 info.get("package_code")
@@ -667,7 +679,19 @@ pub fn append_history_for(
 ///
 /// - `total` = 所有账号剩余积分之和
 /// - `earned` = 今日签到获得（明细里的 `delta` 之和）+ 购买获得（`non_checkin_earned`）
-/// - `consumed` = `|total - earned - 昨日 total|`
+/// - `consumed` = 相邻快照的**正向下降量** `max(0, 昨日 total + earned - 今日 total)`
+///
+/// ## ★ 「首日无基线」不得把余额误报成消耗（已修）
+///
+/// 旧实现对「没有更早快照」的情形把 `yesterday_total` 兜底成 `0.0`，于是首日
+/// `consumed = |total - earned - 0| ≈ total` —— **把整个余额当成了当日消耗**。
+/// 实测后果：新装/清库后的第一份 `credits_daily.json` 里
+/// `{date, total: 2978.35, earned: 0, consumed: 2978.35}`，看板的「消耗」曲线首日
+/// 直接飙到与总余额同高，且与「本机网关零调用」自相矛盾。
+///
+/// 修正口径与 WorkBuddy 侧（`credit_usage.rs`）一致：**消耗只能由相邻快照的下降量
+/// 推出**——没有前一份快照就没有参照，首日只建立基线，`consumed = 0`。
+/// 余额增加（`earned > 下降量`）同样不产生负数消耗，取 `0`。
 ///
 /// 当日快照已存在时**整条更新**而不是跳过：首次记录往往发生在「签到后但积分尚未
 /// 刷新」的时刻，若只写一次，`earned` / `consumed` 会永久停留在错误值。
@@ -693,14 +717,20 @@ pub fn record_daily_snapshot_for(variant: TraeVariant, non_checkin_earned: f64) 
     let earned = round2(today_checkin_earned + non_checkin_earned);
 
     let mut file = load_daily_for(variant);
+    // 「昨日 total」= 最后一份**更早**的快照。`None` 表示这是首份快照（无基线）。
+    // 兜底成 0.0 会把「整个余额」误算成消耗（见上方 ★ 段），因此这里保留 Option。
     let yesterday_total = file
         .snapshots
         .iter()
         .filter(|snapshot| snapshot.date < today)
         .last()
-        .map(|snapshot| snapshot.total)
-        .unwrap_or(0.0);
-    let consumed = round2((total - earned - yesterday_total).abs());
+        .map(|snapshot| snapshot.total);
+    let consumed = match yesterday_total {
+        // 消耗 = 昨余 + 今日获得 - 今余，只在为正时计入（余额增加不产生负数消耗）。
+        Some(previous) => round2((previous + earned - total).max(0.0)),
+        // 首日无基线：只建立基线，不推断消耗。
+        None => 0.0,
+    };
 
     match file
         .snapshots
@@ -731,7 +761,10 @@ pub fn record_daily_snapshot_for(variant: TraeVariant, non_checkin_earned: f64) 
 }
 
 /// 四舍五入到 2 位小数（与参考实现一致，避免浮点尾差在 UI 上显示成 12.340000001）。
-fn round2(value: f64) -> f64 {
+///
+/// 公开给同 crate 的用量投影复用（`trae::official_usage`），避免各处重复实现
+/// 导致同一个数字在不同页面上有不同尾差。
+pub fn round2(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }
 
@@ -1167,6 +1200,58 @@ mod tests {
         assert!(!packages[1].expiring_soon);
     }
 
+    #[test]
+    fn parse_credit_packages_reads_real_display_desc_and_nested_name() {
+        // 实测（2026-10-07）：真实响应里包名不在 `entitlement_base_info.package_name`
+        // （恒为 null），而在顶层 `display_desc`；机读名在
+        // `entitlement_base_info.product_extra.package_extra.package_name`。
+        let now = 1_000_000_i64;
+        let packs = vec![
+            // 真实形态：顶层 display_desc + 嵌套 product_extra.package_extra
+            serde_json::json!({
+                "display_desc": "签到奖励",
+                "group_name": "每日签到",
+                "entitlement_base_info": {
+                    "product_id": 208,
+                    "product_extra": {
+                        "package_extra": { "package_name": "签到奖励" }
+                    },
+                    "quota": { "credits_limit": 150.0 }
+                },
+                "usage": { "credits_amount": 71.6488 },
+                "expire_time": now + 3 * 24 * 3600,
+            }),
+            // 仅顶层 display_desc
+            serde_json::json!({
+                "display_desc": "每月登录赠送",
+                "entitlement_base_info": { "quota": { "credits_limit": 500.0 } },
+            }),
+            // 仅嵌套机读名（无 display_desc）
+            serde_json::json!({
+                "entitlement_base_info": {
+                    "product_extra": {
+                        "package_extra": { "package_name": "月卡" }
+                    },
+                    "quota": { "credits_limit": 100.0 }
+                },
+            }),
+        ];
+        let packages = parse_credit_packages(&packs, now);
+        assert_eq!(packages.len(), 3);
+        assert_eq!(
+            packages[0].package_name.as_deref(),
+            Some("签到奖励"),
+            "display_desc 优先"
+        );
+        assert_eq!(packages[0].used, 71.65, "已用应四舍五入到 2 位");
+        assert_eq!(packages[1].package_name.as_deref(), Some("每月登录赠送"));
+        assert_eq!(
+            packages[2].package_name.as_deref(),
+            Some("月卡"),
+            "无 display_desc 时回落到嵌套机读名"
+        );
+    }
+
     /// ★★ 护栏（issue #7）：「最早到期」**不得**由已用完的包决定。
     ///
     /// 现场：某账号真正还有余额的包 10/30 才到期，但它有一条**已用尽**的包
@@ -1379,6 +1464,81 @@ mod tests {
         assert_eq!(round2(0.0), 0.0);
         // 浮点尾差不应外泄到 UI
         assert_eq!(round2(0.1 + 0.2), 0.3);
+    }
+
+    #[test]
+    fn first_daily_snapshot_does_not_report_balance_as_consumed() {
+        // R：首日无基线时，consumed 必须是 0 —— 绝不能把整个余额当成当日消耗。
+        // 实测症状：credits_daily.json 首条 {total:2978.35, earned:0, consumed:2978.35}。
+        let home = std::env::temp_dir().join(format!("trae-first-snapshot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".buddy-switch").join("trae")).expect("创建隔离目录");
+        let _guard = crate::modules::config::HomeOverrideGuard::set(&home);
+
+        // 造一个已知余额的 remaining 文件（无更早的 daily 快照）。
+        let mut remaining = RemainingCreditsFile::default();
+        remaining.credits.insert("u1".to_string(), 2978.35);
+        save_remaining_for(TraeVariant::default(), &remaining).expect("写入余额");
+
+        record_daily_snapshot(0.0);
+
+        let daily = load_daily_for(TraeVariant::default());
+        let today = &daily.snapshots[daily.snapshots.len() - 1];
+        assert_eq!(today.total, 2978.35);
+        assert_eq!(today.earned, 0.0);
+        assert_eq!(
+            today.consumed, 0.0,
+            "首日无基线不得把余额误报成消耗（旧实现会得 2978.35）"
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn daily_consumption_is_positive_drop_between_snapshots() {
+        // 有基线时，consumed = max(0, 昨余 + 今日获得 - 今余)。
+        let home = std::env::temp_dir().join(format!("trae-drop-snapshot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".buddy-switch").join("trae")).expect("创建隔离目录");
+        let _guard = crate::modules::config::HomeOverrideGuard::set(&home);
+
+        // 预置一份「昨日」快照作为基线。
+        let yesterday = (chrono::Local::now() - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let mut daily = CreditsDailyFile::default();
+        daily.snapshots.push(CreditsDailySnapshot {
+            date: yesterday,
+            total: 1000.0,
+            earned: 0.0,
+            consumed: 0.0,
+        });
+        store::write_json(&paths::credits_daily_file_for(TraeVariant::default()), &daily)
+            .expect("写入昨日快照");
+
+        // 今日余额 700，且今日签到获得 100 → 净消耗应为 1000 + 100 - 700 = 400。
+        let mut remaining = RemainingCreditsFile::default();
+        remaining.credits.insert("u1".to_string(), 700.0);
+        save_remaining_for(TraeVariant::default(), &remaining).expect("写入余额");
+
+        record_daily_snapshot(100.0);
+
+        let daily = load_daily_for(TraeVariant::default());
+        let today = &daily.snapshots[daily.snapshots.len() - 1];
+        assert_eq!(today.total, 700.0);
+        assert_eq!(today.earned, 100.0);
+        assert_eq!(today.consumed, 400.0, "应等于昨余 + 今日获得 - 今余");
+
+        // 余额反而增加（获得 > 下降）时不得出现负数消耗。
+        let mut higher = RemainingCreditsFile::default();
+        higher.credits.insert("u1".to_string(), 2000.0);
+        save_remaining_for(TraeVariant::default(), &higher).expect("写入更高余额");
+        record_daily_snapshot(0.0);
+        let daily = load_daily_for(TraeVariant::default());
+        let today = &daily.snapshots[daily.snapshots.len() - 1];
+        assert_eq!(today.consumed, 0.0, "余额增加不得产生负数消耗");
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

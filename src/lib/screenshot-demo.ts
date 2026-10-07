@@ -15,6 +15,8 @@ import type {
   TraeClientModelList,
   TraeCreditsOverview,
   TraeEnvStatus,
+  TraeOfficialUsageAccount,
+  TraeOfficialUsageOverview,
   TraeVariantsStatus,
   TraeGatewayConfigRaw,
   TraeGatewayLogEntry,
@@ -1069,6 +1071,80 @@ function demoTraeCredits(): TraeCreditsOverview {
 }
 
 /**
+ * 演示用的**官方用量**总览（`get_trae_official_usage`）。
+ *
+ * 与 `demoTraeCredits` 的刻意差异：这里的「消耗」是**账号累计**（上游账本），
+ * 因此数字**远大于**每日快照里的十几点 —— 演示站必须让这个口径差异一眼可见，
+ * 否则截图会被当成「同一份数据算了两遍」。
+ *
+ * 三个账号刻意覆盖三种形态：正常有包 / 包已用尽 / 上游没给 `usage_summary`（`null`）。
+ */
+function demoTraeOfficialUsage(): TraeOfficialUsageOverview {
+  const accounts: TraeOfficialUsageAccount[] = [
+    {
+      userId: "7481920",
+      accountName: t("shared.demo.trae.name.main"),
+      consumedAmount: 821.65,
+      totalAmount: 3800,
+      consumptionRatio: 0.21622368421052632,
+      remaining: 2978.35,
+      packagesUsedTotal: 821.65,
+      universal: { total: 3350, used: 821.65, remaining: 2528.35, packageCount: 6 },
+      packages: [
+        { name: t("shared.demo.trae.pkg.checkin"), group: t("shared.demo.trae.pkgGroup.checkin"), productId: 208, total: 150, used: 150, remaining: 0, purchased: false, expireAt: Math.floor(futureAt(9) / 1000) },
+        { name: t("shared.demo.trae.pkg.login"), group: t("shared.demo.trae.pkgGroup.login"), productId: 208, total: 150, used: 150, remaining: 0, purchased: false, expireAt: Math.floor(futureAt(20) / 1000) },
+        { name: t("shared.demo.trae.pkg.purchased"), group: t("shared.demo.trae.pkgGroup.subscription"), productId: 208, total: 500, used: 300.65, remaining: 199.35, purchased: true, expireAt: Math.floor(futureAt(26) / 1000) },
+        { name: t("shared.demo.trae.pkg.free"), group: t("shared.demo.trae.pkgGroup.free"), productId: 0, total: 50, used: 0, remaining: 50, purchased: false, expireAt: null },
+      ],
+    },
+    {
+      userId: "7481999",
+      accountName: t("shared.demo.trae.name.altA"),
+      consumedAmount: 135.5,
+      totalAmount: 300,
+      consumptionRatio: 0.45166666666666666,
+      remaining: 164.5,
+      packagesUsedTotal: 135.5,
+      universal: { total: 300, used: 135.5, remaining: 164.5, packageCount: 2 },
+      packages: [
+        { name: t("shared.demo.trae.pkg.checkin"), group: t("shared.demo.trae.pkgGroup.checkin"), productId: 208, total: 150, used: 135.5, remaining: 14.5, purchased: false, expireAt: Math.floor(futureAt(5) / 1000) },
+        { name: t("shared.demo.trae.pkg.login"), group: t("shared.demo.trae.pkgGroup.login"), productId: 221, total: 150, used: 0, remaining: 150, purchased: false, expireAt: Math.floor(futureAt(12) / 1000) },
+      ],
+    },
+    {
+      // 上游**没给** `usage_summary`（例如新账号/接口临时缺数）——`consumedAmount` 为 `null`。
+      // 演示站必须让「`null` ≠ 0」这条纪律可见：界面应显示「—」而不是 0。
+      userId: "7482044",
+      accountName: t("shared.demo.trae.name.altB"),
+      consumedAmount: null,
+      totalAmount: null,
+      consumptionRatio: null,
+      remaining: null,
+      packagesUsedTotal: 0,
+      universal: { total: 0, used: 0, remaining: 0, packageCount: 0 },
+      packages: [],
+    },
+  ];
+  const totalAmount = accounts.reduce((sum, account) => sum + (account.totalAmount ?? 0), 0);
+  const consumedAmount = accounts.reduce((sum, account) => sum + (account.consumedAmount ?? 0), 0);
+  return {
+    accounts,
+    aggregate: {
+      accountCount: accounts.filter((account) => account.consumedAmount !== null).length,
+      consumedAmount: Math.round(consumedAmount * 100) / 100,
+      totalAmount: Math.round(totalAmount * 100) / 100,
+      remaining: Math.round((totalAmount - consumedAmount) * 100) / 100,
+      consumptionRatio: totalAmount > 0 ? consumedAmount / totalAmount : null,
+    },
+    // 部分失败是正常态：演示站给一条，好让「错误行」的样式也能被截到。
+    errors: [
+      { userId: "7482051", error: t("shared.demo.trae.officialUsage.errorExpired") },
+    ],
+    note: t("shared.demo.trae.officialUsage.note"),
+  };
+}
+
+/**
  * 演示用的登录态快照总览（**按程序位分家**）。
  *
  * 快照是**客户端级**的（只能恢复到采集它的那个客户端），因此这里按**程序位**给数据：
@@ -1552,6 +1628,7 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
     case "get_trae_accounts": return demoTraeAccounts();
     case "get_trae_checkin_status": return demoTraeCheckinStatus();
     case "get_trae_credits": return demoTraeCredits();
+    case "get_trae_official_usage": return demoTraeOfficialUsage();
     case "get_trae_profiles": return demoTraeProfiles(args);
     case "get_trae_settings": return demoTraeSettings();
     case "get_trae_token_statistics":

@@ -104,6 +104,9 @@ pub mod oauth;
 pub mod oauth_client;
 /// OAuth 回调结果页（浏览器里那一页的 HTML 渲染，见模块头）。
 pub mod oauth_result_page;
+/// Trae **官方**积分用量投影：打通 `ide_user_ent_usage` 的 `usage_summary`，
+/// 使「不经过本机网关的调用消耗」也可查（见模块头，含实测事实与口径边界）。
+pub mod official_usage;
 pub mod paths;
 pub mod platform;
 pub mod profile;

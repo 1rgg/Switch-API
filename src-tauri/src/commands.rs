@@ -1383,6 +1383,26 @@ pub fn get_trae_token_statistics(days: Option<i64>, scope: Option<String>) -> Va
     trae::handlers::token_statistics(days, scope)
 }
 
+/// POST /api/trae/official-usage —— **官方**积分用量（含不经过本机网关的消耗）。
+///
+/// `userIds` 为要查询的账号；`None` / 空 → 该变体全部账号。
+/// 需要逐账号直连上游，故为 `async`。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_trae_official_usage(
+    variant: Option<String>,
+    user_ids: Option<Vec<String>>,
+) -> Value {
+    let variant = parse_trae_variant(variant.as_deref());
+    let user_ids: Vec<String> = match user_ids {
+        Some(ids) if !ids.is_empty() => ids,
+        _ => trae::account::entries_for(variant)
+            .into_iter()
+            .map(|(uid, _account)| uid)
+            .collect(),
+    };
+    trae::handlers::official_usage_overview_for(variant, &user_ids).await
+}
+
 /// GET /api/trae/logs —— 运行日志（系统日志页的「运行日志」标签页）。
 ///
 /// `kind` 取 `app` / `checkin` / `switch`（缺省或 `all` 表示不限）；

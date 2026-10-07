@@ -127,6 +127,28 @@ export const en = {
   "trae.stats.credits.trendEmptyAccounts": "No account data yet. Add an account and the credits trend shows up here.",
   "trae.stats.credits.trendEmptyData": "No trend data yet. Run a check-in or “Sync credits” once to see the daily change.",
 
+  // ---- Official usage (account-ledger scope; includes calls that bypass the local gateway) ----
+  "trae.stats.credits.official.title": "Official usage (account cumulative)",
+  "trae.stats.credits.official.accountCount": "{count} accounts fetched",
+  "trae.stats.credits.official.empty": "No official usage data yet.",
+  "trae.stats.credits.official.metric.consumed": "Cumulative consumed",
+  "trae.stats.credits.official.metric.consumedHint": "Upstream account ledger",
+  "trae.stats.credits.official.metric.total": "Total quota",
+  "trae.stats.credits.official.metric.totalHint": "Ledger total",
+  "trae.stats.credits.official.metric.ratio": "Consumption ratio",
+  "trae.stats.credits.official.metric.ratioHint": "Cumulative consumed ÷ total quota",
+  "trae.stats.credits.official.metric.remaining": "Remaining quota",
+  "trae.stats.credits.official.metric.remainingHint": "Total quota − cumulative consumed",
+  "trae.stats.credits.official.col.account": "Account",
+  "trae.stats.credits.official.col.universal": "Universal quota",
+  "trae.stats.credits.official.col.consumed": "Consumed",
+  "trae.stats.credits.official.col.total": "Total",
+  "trae.stats.credits.official.col.remaining": "Remaining",
+  "trae.stats.credits.official.col.packages": "Packages (used / total)",
+  "trae.stats.credits.official.purchased": "purchased",
+  "trae.stats.credits.official.unnamedPackage": "Unnamed package",
+  "trae.stats.credits.official.noPackages": "No per-package detail",
+
   // ---- Dimensions the platform cannot provide ----
   "trae.stats.credits.unsupportedTitle": "Dimensions not supported by the platform",
   "trae.stats.credits.unsupportedOnly": " ({on} only)",

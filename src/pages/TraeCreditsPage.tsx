@@ -24,7 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import * as api from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import type { TranslationKey } from "@/locales/zh";
-import type { TraeAccountsOverview, TraeCreditsOverview } from "@/lib/trae-types";
+import type { TraeAccountsOverview, TraeCreditsOverview, TraeOfficialUsageOverview } from "@/lib/trae-types";
 import { cn } from "@/lib/utils";
 import { useCachedResource } from "@/lib/use-cached-resource";
 import { useTraeVariant } from "@/lib/use-trae-variant";
@@ -117,12 +117,21 @@ export default function TraeCreditsPage() {
    * 中间态。
    */
   const loadSnapshot = useCallback(
-    async (): Promise<{ credits: TraeCreditsOverview; overview: TraeAccountsOverview }> => {
+    async (): Promise<{
+      credits: TraeCreditsOverview;
+      overview: TraeAccountsOverview;
+      officialUsage: TraeOfficialUsageOverview | null;
+    }> => {
       const [creditData, accountData] = await Promise.all([
         api.getTraeCredits(variant),
         api.getTraeAccounts(variant),
       ]);
-      return { credits: creditData, overview: accountData };
+      // 官方用量是**另一条上游链路**（逐个账号直连 `ide_user_ent_usage`），
+      // 任一账号失败都不该把整页拖垮 —— 因此单独 catch，取不到就是 `null`（该区块隐藏）。
+      const officialUsage = await api
+        .getTraeOfficialUsage(variant)
+        .catch(() => null);
+      return { credits: creditData, overview: accountData, officialUsage };
     },
     [variant],
   );
@@ -136,6 +145,7 @@ export default function TraeCreditsPage() {
 
   const credits = snapshot?.credits ?? null;
   const overview = snapshot?.overview ?? null;
+  const officialUsage = snapshot?.officialUsage ?? null;
 
   const accounts = overview?.accounts ?? [];
   const groups = overview?.groups ?? [];
@@ -376,6 +386,140 @@ export default function TraeCreditsPage() {
           </CardContent>
         </Card>
       </section>
+
+      {/* ---- 官方用量（账号账本口径；含不经过本机网关的消耗） ---- */}
+      {officialUsage && (
+        <section className="mt-6 min-w-0 space-y-2.5" aria-labelledby="trae-credits-official-title">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-1">
+            <h2 id="trae-credits-official-title" className="text-[13px] font-medium leading-5">
+              {t("trae.stats.credits.official.title")}
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              {t("trae.stats.credits.official.accountCount", {
+                count: officialUsage.aggregate.accountCount,
+              })}
+            </span>
+          </div>
+          {/* 口径说明**来自后端**（`handlers::official_usage_overview_for` 的 `note`）——
+              前端不另写一份，避免口径漂移。 */}
+          <p className="px-1 text-xs leading-5 text-muted-foreground">{officialUsage.note}</p>
+          <Card className="min-w-0 gap-0 overflow-hidden rounded-xl py-0 shadow-none">
+            <CardContent className="grid min-w-0 grid-cols-1 divide-y divide-border/60 p-0 sm:grid-cols-4 sm:divide-y-0 sm:py-5">
+              <StatMetric
+                icon={TrendingDown}
+                label={t("trae.stats.credits.official.metric.consumed")}
+                value={formatCredits(officialUsage.aggregate.consumedAmount)}
+                hint={t("trae.stats.credits.official.metric.consumedHint")}
+                tone={officialUsage.aggregate.consumedAmount > 0 ? "down" : "default"}
+              />
+              <StatMetric
+                icon={Coins}
+                label={t("trae.stats.credits.official.metric.total")}
+                value={formatCredits(officialUsage.aggregate.totalAmount)}
+                hint={t("trae.stats.credits.official.metric.totalHint")}
+                divided
+              />
+              <StatMetric
+                icon={CalendarDays}
+                label={t("trae.stats.credits.official.metric.ratio")}
+                value={
+                  officialUsage.aggregate.consumptionRatio === null
+                    ? "—"
+                    : `${(officialUsage.aggregate.consumptionRatio * 100).toFixed(1)}%`
+                }
+                hint={t("trae.stats.credits.official.metric.ratioHint")}
+                divided
+              />
+              <StatMetric
+                icon={User}
+                label={t("trae.stats.credits.official.metric.remaining")}
+                value={formatCredits(officialUsage.aggregate.remaining)}
+                hint={t("trae.stats.credits.official.metric.remainingHint")}
+                divided
+              />
+            </CardContent>
+          </Card>
+
+          {officialUsage.accounts.length === 0 ? (
+            <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+              {t("trae.stats.credits.official.empty")}
+            </div>
+          ) : (
+            <Card className="min-w-0 gap-0 overflow-hidden rounded-xl py-0 shadow-none">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-sm">
+                  <thead className="bg-muted/50 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left font-medium">{t("trae.stats.credits.official.col.account")}</th>
+                      <th className="px-4 py-2.5 text-right font-medium">{t("trae.stats.credits.official.col.universal")}</th>
+                      <th className="px-4 py-2.5 text-right font-medium">{t("trae.stats.credits.official.col.consumed")}</th>
+                      <th className="px-4 py-2.5 text-right font-medium">{t("trae.stats.credits.official.col.total")}</th>
+                      <th className="px-4 py-2.5 text-right font-medium">{t("trae.stats.credits.official.col.remaining")}</th>
+                      <th className="px-4 py-2.5 text-left font-medium">{t("trae.stats.credits.official.col.packages")}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {officialUsage.accounts.map((account) => (
+                      <tr key={account.userId}>
+                        <td className="px-4 py-2.5">
+                          <div className="font-medium">{account.accountName}</div>
+                          <div className="font-mono text-xs text-muted-foreground">{account.userId}</div>
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                          {formatCredits(account.universal.total)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          {formatCredits(account.consumedAmount)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                          {formatCredits(account.totalAmount)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          {formatCredits(account.remaining)}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {account.packages.length === 0 ? (
+                            <span className="text-xs text-muted-foreground">
+                              {t("trae.stats.credits.official.noPackages")}
+                            </span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {account.packages.map((pkg, index) => (
+                                <Badge
+                                  key={`${pkg.name ?? "pkg"}-${index}`}
+                                  variant="secondary"
+                                  className="gap-1 font-normal"
+                                  title={`${pkg.group ?? ""}${pkg.purchased ? ` · ${t("trae.stats.credits.official.purchased")}` : ""}`}
+                                >
+                                  {pkg.name ?? t("trae.stats.credits.official.unnamedPackage")}
+                                  <span className="tabular-nums text-muted-foreground">
+                                    {formatCredits(pkg.used)}/{formatCredits(pkg.total)}
+                                  </span>
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {officialUsage.errors.length > 0 && (
+            <div className="px-1 text-xs leading-5 text-muted-foreground">
+              {officialUsage.errors.map((item) => (
+                <div key={item.userId} className="flex flex-wrap gap-x-2">
+                  <span className="font-mono">{item.userId}</span>
+                  <span>{item.error}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ---- 平台做不到的维度（置灰说明；形状来自 handlers::unsupported_note） ---- */}
       {(credits?.unsupported.length ?? 0) > 0 && (

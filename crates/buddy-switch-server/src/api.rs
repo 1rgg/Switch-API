@@ -196,6 +196,7 @@ fn api_routes() -> Router {
         .route("/api/trae/checkin", post(api_trae_checkin))
         .route("/api/trae/credits", get(api_trae_credits))
         .route("/api/trae/token-stats", get(api_trae_token_statistics))
+        .route("/api/trae/official-usage", post(api_trae_official_usage))
         .route("/api/trae/logs", get(api_trae_logs))
         .route("/api/trae/credits/refresh", post(api_trae_refresh_credits))
         .route("/api/trae/refresh-jwt", post(api_trae_refresh_jwt))
@@ -1370,6 +1371,29 @@ async fn api_trae_token_statistics(RawQuery(query): RawQuery) -> Response {
         .map(|value| trae::token_stats::TraeTokenScope::parse(&value))
         .unwrap_or_default();
     json_ok(trae::handlers::token_statistics(days, scope))
+}
+
+/// POST /api/trae/official-usage —— **官方**积分用量（含不经过本机网关的消耗）。
+///
+/// body：`{ "variant": "cn"|"global", "userIds": ["…"] }`。
+/// `userIds` 缺省时取**全部账号**（该变体），与「刷新全部积分」的直觉一致。
+///
+/// 需要逐账号直连上游，账号多时请只传关心的子集。
+async fn api_trae_official_usage(Json(body): Json<Value>) -> Response {
+    let variant = parse_trae_variant(body.get("variant").and_then(Value::as_str));
+    let user_ids: Vec<String> = match body.get("userIds").and_then(Value::as_array) {
+        Some(items) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        // 缺省 → 该变体全部账号（`entries_for` 的第一元素已是解析后的 uid）。
+        None => trae::account::entries_for(variant)
+            .into_iter()
+            .map(|(uid, _account)| uid)
+            .collect(),
+    };
+    json_ok(trae::handlers::official_usage_overview_for(variant, &user_ids).await)
 }
 
 /// GET /api/trae/logs —— 运行日志（`kind` / `date` / `keyword` / `limit` / `variant` 均可选）。

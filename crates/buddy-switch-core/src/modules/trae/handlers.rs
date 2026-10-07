@@ -186,6 +186,95 @@ pub fn credits_overview_for(variant: TraeVariant) -> Value {
     })
 }
 
+/// 指定变体的**官方积分用量**总览（含不经过本机网关的消耗）。
+///
+/// ## 与 [`credits_overview_for`] 的分工
+///
+/// - `credits_overview_for`：**本地**口径——剩余余额、签到明细、本地快照趋势；
+/// - 本函数：**官方**口径——上游账号账本的累计消耗（`usage_summary`）与逐包归因。
+///
+/// 两者刻意分开：本地快照是「我们观察到余额怎么变」，官方用量是「上游说总共用掉多少」。
+/// 前者能出趋势但粒度粗、有首日无基线问题；后者精确到账号累计但**没有时间维度**。
+///
+/// ## 为什么这是一个异步 handler
+///
+/// 需要逐账号直连上游（`credits::post_json`）。为控制请求数，只查**传入的账号子集**；
+/// 空集直接返回空视图（不猜账号）。
+///
+/// 返回形状见 [`official_usage::AccountUsage::to_value`]；顶层带 `accounts` 数组与
+/// 一个 `aggregate`（各账号求和），便于前端一次渲染。
+pub async fn official_usage_overview_for(
+    variant: TraeVariant,
+    user_ids: &[String],
+) -> Value {
+    use crate::modules::trae::official_usage;
+
+    let mut accounts: Vec<Value> = Vec::new();
+    let mut errors: Vec<Value> = Vec::new();
+
+    for user_id in user_ids {
+        let Some(account) = account::find_for(variant, user_id) else {
+            errors.push(json!({ "userId": user_id, "error": "账号不存在" }));
+            continue;
+        };
+        let name = if account.name.trim().is_empty() {
+            user_id.clone()
+        } else {
+            account.name.clone()
+        };
+        match official_usage::account_usage(variant, user_id, &name, &account.jwt).await {
+            Ok(usage) => accounts.push(usage.to_value()),
+            Err(error) => errors.push(json!({ "userId": user_id, "error": error })),
+        }
+    }
+
+    aggregate_official_usage(accounts, errors)
+}
+
+/// 把逐账号投影合成顶层视图（**纯函数**——聚合算术可单测，不碰网络）。
+///
+/// 「累计消耗」只累加**非 `null`** 的账号：上游没给 `usage_summary` 的账号
+/// （`consumedAmount === null`）**不是 0**，它不该把总额拉低，也不该被算进
+/// `consumptionRatio` 的分母 —— 因此 `accountCount` 特意只数**有数**的账号，
+/// 与 `accounts.length` 可能不等（后者含只有 `packages` 的账号）。
+pub fn aggregate_official_usage(accounts: Vec<Value>, errors: Vec<Value>) -> Value {
+    let mut total_consumed = 0.0_f64;
+    let mut total_amount = 0.0_f64;
+    let mut with_usage = 0_usize;
+
+    for account in &accounts {
+        let consumed = account.get("consumedAmount").and_then(Value::as_f64);
+        let total = account.get("totalAmount").and_then(Value::as_f64);
+        if consumed.is_none() && total.is_none() {
+            continue;
+        }
+        with_usage += 1;
+        total_consumed += consumed.unwrap_or(0.0);
+        total_amount += total.unwrap_or(0.0);
+    }
+
+    let total_amount = credits::round2(total_amount);
+    let total_consumed = credits::round2(total_consumed);
+
+    json!({
+        "accounts": accounts,
+        "aggregate": {
+            "accountCount": with_usage,
+            "consumedAmount": total_consumed,
+            "totalAmount": total_amount,
+            "remaining": credits::round2((total_amount - total_consumed).max(0.0)),
+            "consumptionRatio": if total_amount > 0.0 {
+                Some(total_consumed / total_amount)
+            } else {
+                None
+            },
+        },
+        "errors": errors,
+        // 口径声明：这是**账号累计**，不含时间维度；粒度到账号/包，不到逐请求。
+        "note": "口径：上游账号账本的累计消耗（含不经过本机网关的调用），无逐日/逐请求明细。",
+    })
+}
+
 /// 新增账号（手动粘贴 JWT；默认变体，兼容壳）。
 pub fn add_account(name: &str, jwt_value: &str, group_id: Option<&str>) -> Result<Value, String> {
     add_account_for(TraeVariant::default(), name, jwt_value, group_id)
@@ -1260,5 +1349,37 @@ mod tests {
             assert!(value.get("reason").is_some());
             assert!(value.get("ok").is_none(), "非 Windows 不得返回假成功");
         }
+    }
+
+    /// 聚合算术：只累加**有数**的账号，`null` 既不入分母也不算 0。
+    #[test]
+    fn official_usage_aggregate_skips_missing_summary() {
+        let accounts = vec![
+            json!({ "userId": "a", "consumedAmount": 800.0, "totalAmount": 3800.0 }),
+            // 上游没给 usage_summary：两个字段都是 null —— 不参与累加，也不计入 accountCount。
+            json!({ "userId": "b", "consumedAmount": Value::Null, "totalAmount": Value::Null }),
+            json!({ "userId": "c", "consumedAmount": 21.65, "totalAmount": 200.0 }),
+        ];
+        let value = aggregate_official_usage(accounts, vec![]);
+
+        assert_eq!(value["aggregate"]["accountCount"], 2, "只数有数的账号");
+        assert_eq!(value["aggregate"]["consumedAmount"], 821.65);
+        assert_eq!(value["aggregate"]["totalAmount"], 4000.0);
+        assert_eq!(value["aggregate"]["remaining"], 3178.35);
+        // 顶层 accounts 仍含全部三张卡（`null` 那张要说得出「上游没给」）。
+        assert_eq!(value["accounts"].as_array().map(Vec::len), Some(3));
+        assert!(value["note"].is_string());
+    }
+
+    /// 总额为 0 时**不编造**比例（`null`，而不是 0 或 NaN）。
+    #[test]
+    fn official_usage_aggregate_without_total_has_null_ratio() {
+        let value = aggregate_official_usage(
+            vec![json!({ "userId": "a", "consumedAmount": Value::Null, "totalAmount": Value::Null })],
+            vec![json!({ "userId": "b", "error": "HTTP 401" })],
+        );
+        assert_eq!(value["aggregate"]["accountCount"], 0);
+        assert_eq!(value["aggregate"]["consumptionRatio"], Value::Null);
+        assert_eq!(value["errors"].as_array().map(Vec::len), Some(1));
     }
 }

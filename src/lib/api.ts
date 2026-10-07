@@ -69,6 +69,7 @@ import type {
   TraeImportPreview,
   TraeLogQuery,
   TraeLogsResponse,
+  TraeOfficialUsageOverview,
   TraeOAuthPollResult,
   TraeOAuthStartResult,
   TraeProfilesOverview,
@@ -125,7 +126,7 @@ const DEMO_READ_COMMANDS = new Set([
   // 由 `DemoAction` 包裹后在演示模式下统一提示不可操作。
   "get_trae_env", "get_trae_variants", "get_trae_capabilities", "get_trae_accounts",
   "get_trae_checkin_status",
-  "get_trae_credits", "get_trae_token_statistics", "get_trae_logs", "get_trae_profiles",
+  "get_trae_credits", "get_trae_official_usage", "get_trae_token_statistics", "get_trae_logs", "get_trae_profiles",
   "get_trae_settings", "get_trae_gateway_config", "trae_gateway_status",
   "get_trae_gateway_models", "get_trae_client_models", "list_trae_api_keys",
   "get_trae_gateway_logs",
@@ -236,6 +237,7 @@ const ROUTES: Record<string, Route> = {
   get_trae_checkin_status: { method: "GET", path: "/api/trae/checkin/status" },
   get_trae_credits: { method: "GET", path: "/api/trae/credits" },
   get_trae_token_statistics: { method: "GET", path: "/api/trae/token-stats" },
+  get_trae_official_usage: { method: "POST", path: "/api/trae/official-usage" },
   get_trae_logs: { method: "GET", path: "/api/trae/logs" },
   get_trae_profiles: { method: "GET", path: "/api/trae/profiles" },
   get_trae_settings: { method: "GET", path: "/api/trae/settings" },
@@ -1135,6 +1137,27 @@ export function getTraeCheckinStatus(variant?: TraeVariantId | null): Promise<Tr
 /** 剩余积分、签到明细与每日趋势（`variant` 决定读哪条产品线的数据）。 */
 export function getTraeCredits(variant?: TraeVariantId | null): Promise<TraeCreditsOverview> {
   return call("get_trae_credits", variantArgs(variant));
+}
+
+/**
+ * Trae **官方**积分用量（账号账本口径）—— 含**不经过本机网关**的消耗。
+ *
+ * 与 {@link getTraeCredits} 的分工：后者是「本机快照差的余额趋势」，只覆盖
+ * 切换器跑过快照的日子；本函数直连上游 `ide_user_ent_usage`，拿到的是
+ * **账号生命周期累计消耗**（`consumedAmount`），因此 IDE 里直接对话的消耗也包含在内。
+ *
+ * ⚠️ 口径是**累计**、粒度到「账号 + 包」，**没有**逐日/逐请求明细 —— 界面不要标成「今日」。
+ *
+ * `userIds` 不传时后端默认取该区域**全部账号**（逐个直连上游，部分失败不影响其它账号）。
+ */
+export function getTraeOfficialUsage(
+  variant?: TraeVariantId | null,
+  userIds?: string[] | null,
+): Promise<TraeOfficialUsageOverview> {
+  return call("get_trae_official_usage", {
+    variant: variant ?? null,
+    userIds: userIds && userIds.length > 0 ? userIds : null,
+  });
 }
 
 /**

@@ -134,6 +134,28 @@ export const zh = {
   "trae.stats.credits.trendEmptyAccounts": "尚无账号数据。添加账号后这里会展示积分趋势。",
   "trae.stats.credits.trendEmptyData": "暂无趋势数据。执行一次签到或「同步积分」后即可看到每日变化。",
 
+  // ---- 官方用量（账号账本口径；含不经过本机网关的消耗） ----
+  "trae.stats.credits.official.title": "官方用量（账号累计）",
+  "trae.stats.credits.official.accountCount": "已取到 {count} 个账号",
+  "trae.stats.credits.official.empty": "官方用量暂无数据。",
+  "trae.stats.credits.official.metric.consumed": "累计消耗",
+  "trae.stats.credits.official.metric.consumedHint": "上游账号账本",
+  "trae.stats.credits.official.metric.total": "总额度",
+  "trae.stats.credits.official.metric.totalHint": "账本口径合计",
+  "trae.stats.credits.official.metric.ratio": "消耗比例",
+  "trae.stats.credits.official.metric.ratioHint": "累计消耗 ÷ 总额度",
+  "trae.stats.credits.official.metric.remaining": "剩余额度",
+  "trae.stats.credits.official.metric.remainingHint": "总额度 − 累计消耗",
+  "trae.stats.credits.official.col.account": "账号",
+  "trae.stats.credits.official.col.universal": "通用额度",
+  "trae.stats.credits.official.col.consumed": "累计消耗",
+  "trae.stats.credits.official.col.total": "总额度",
+  "trae.stats.credits.official.col.remaining": "剩余",
+  "trae.stats.credits.official.col.packages": "积分包（已用 / 总额）",
+  "trae.stats.credits.official.purchased": "购买",
+  "trae.stats.credits.official.unnamedPackage": "未命名包",
+  "trae.stats.credits.official.noPackages": "无逐包明细",
+
   // ---- 平台不支持的维度 ----
   "trae.stats.credits.unsupportedTitle": "平台不支持的维度",
   "trae.stats.credits.unsupportedOnly": "（仅 {on}）",

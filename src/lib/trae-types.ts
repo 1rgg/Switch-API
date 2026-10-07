@@ -428,6 +428,116 @@ export interface TraeCreditsOverview {
   unsupported: TraeUnsupported[];
 }
 
+// ---------------------------------------------------------------------------
+// 官方积分用量（`get_trae_official_usage`）—— 不经过本机网关的消耗也能查到
+// ---------------------------------------------------------------------------
+//
+// ## 为什么需要它（与 {@link TraeCreditsOverview} 的关系）
+//
+// `TraeCreditsOverview` 的「消耗」来自**本机快照差**（每日余额相减），因此它：
+// 1. 只在切换器跑过、且当天有快照时才有数；
+// 2. 分不出「在 Trae IDE 里直接对话」与「经网关调用」——两者都只是余额下降。
+//
+// Trae **官方**其实给了账号级的累计用量（上游账号账本，与调用路径无关）：
+// `POST {account_base}/trae/api/v2/pay/ide_user_ent_usage` 的 `usage_summary`
+// 给出 `consumed_amount` / `total_amount` / `consumption_ratio`。
+// 本形状就是那份响应的投影。
+//
+// ## 口径纪律（**不要**按 WorkBuddy 的逐请求用量来理解）
+//
+// - `consumedAmount` 是**账号生命周期累计**，上游**没给时间维度**，
+//   因此这里**没有** `date` / `days` 字段 —— 前端不得把它标成「今日」；
+// - 粒度是「账号 累计 + 逐包」，**不是** requestId 级逐条 —— 实测 8 个候选
+//   逐请求/逐日端点全部 404。WorkBuddy 侧的 `OfficialUsage` 才是逐请求口径，
+//   两者形状刻意不同，别为了「统一」互相对齐（会得到一堆恒为 0 的键）。
+//
+// 字段名与 Rust 侧 `official_usage::AccountUsage::to_value()` 逐字一致（camelCase）。
+
+/** 一个积分包的用量归因（比 {@link TraeCreditPackage} 多带产品线与来源）。 */
+export interface TraeOfficialUsagePackage {
+  /** 人类可读包名（顶层 `display_desc`，如「签到奖励」）；缺失为 `null`。 */
+  name: string | null;
+  /** 分组名（如「每日签到」「每月登录积分」）；缺失为 `null`。 */
+  group: string | null;
+  /** `product_id`：208 通用 / 221 每月登录 / 0 占位。 */
+  productId: number | null;
+  /** 包总额度。 */
+  total: number;
+  /** 已用（`usage.credits_amount`；无 usage 视为 0）。 */
+  used: number;
+  /** 剩余（`total - used`，下限 0）。 */
+  remaining: number;
+  /** 是否**购买**获得（`charge_amount > 0`）；`false` = 赠送/签到得到。 */
+  purchased: boolean;
+  /** 到期时间（Unix 秒）；缺失为 `null`。 */
+  expireAt: number | null;
+}
+
+/**
+ * 通用积分（`product_id = 208`）一档的汇总。
+ *
+ * 只统计 208 的包 —— 与 Trae 池的真实消耗口径一致（Work 套餐积分是 209，另计）。
+ */
+export interface TraeOfficialUsageUniversal {
+  total: number;
+  used: number;
+  remaining: number;
+  /** 归入本档的包数。 */
+  packageCount: number;
+}
+
+/** 单个账号的官方用量快照。 */
+export interface TraeOfficialUsageAccount {
+  userId: string;
+  accountName: string;
+  /**
+   * 已消耗额度（账号生命周期累计）；上游没给这个数时**为 `null`**。
+   *
+   * ⚠️ `null` 与 `0` 语义完全不同：`null` = 上游没给，`0` = 上游明确说是 0。
+   * 渲染时必须分开（`null` 显示「—」或「无数据」，不要显示成 0）。
+   */
+  consumedAmount: number | null;
+  /** 总额度（账本口径，实测 = Σ 逐包 `credits_limit`）；缺失为 `null`。 */
+  totalAmount: number | null;
+  /** 消耗比例（`consumed / total`，上游直接给）；缺失为 `null`。 */
+  consumptionRatio: number | null;
+  /** 剩余额度（`total - consumed`，下限 0）；两者缺一时为 `null`。 */
+  remaining: number | null;
+  /** 逐包已用之和（与上游 `consumedAmount` 互为校验）。 */
+  packagesUsedTotal: number;
+  /** 通用积分（208）一档的汇总。 */
+  universal: TraeOfficialUsageUniversal;
+  /** 逐包明细（无额度上限的占位包已剔除）。 */
+  packages: TraeOfficialUsagePackage[];
+}
+
+/** 多账号聚合（`get_trae_official_usage().aggregate`）。 */
+export interface TraeOfficialUsageAggregate {
+  /** 成功取到数据的账号数。 */
+  accountCount: number;
+  consumedAmount: number;
+  totalAmount: number;
+  remaining: number;
+  /** 总额为 0 时为 `null`（不编造比例）。 */
+  consumptionRatio: number | null;
+}
+
+/** 某个账号取数失败的原因（**不影响**其它账号 —— 部分失败是正常态）。 */
+export interface TraeOfficialUsageError {
+  userId: string;
+  error: string;
+}
+
+/** 官方用量总览（`get_trae_official_usage`）。 */
+export interface TraeOfficialUsageOverview {
+  accounts: TraeOfficialUsageAccount[];
+  aggregate: TraeOfficialUsageAggregate;
+  /** 逐账号的失败原因；全成功时为空数组。 */
+  errors: TraeOfficialUsageError[];
+  /** 口径声明（后端下发，可直接上界面）。 */
+  note: string;
+}
+
 /** 登录态快照信息。 */
 export interface TraeProfileInfo {
   slot: string;

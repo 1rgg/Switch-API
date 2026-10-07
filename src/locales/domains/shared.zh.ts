@@ -162,6 +162,19 @@ export const zh = {
   "shared.demo.trae.log.savedLogin": "保存登录态: user={uid} 文件数={count}",
   "shared.demo.trae.log.jwtRefreshed": "JWT 自动刷新成功: user={uid} 新到期={hours}h",
   "shared.demo.trae.log.deviceReset": "设备标识重置完成: {count} 项生效",
+  // ---- Trae：官方用量演示数据（`get_trae_official_usage`） ----
+  // 包名与分组名取自**上游真实字符串**（`display_desc` / `group_name`）——
+  // 演示站与真机必须同形，否则截图会被当成「界面在自造包名」。
+  "shared.demo.trae.pkg.checkin": "签到奖励",
+  "shared.demo.trae.pkg.login": "每月登录赠送",
+  "shared.demo.trae.pkg.purchased": "购买套餐",
+  "shared.demo.trae.pkg.free": "免费额度",
+  "shared.demo.trae.pkgGroup.checkin": "每日签到",
+  "shared.demo.trae.pkgGroup.login": "每月登录积分",
+  "shared.demo.trae.pkgGroup.subscription": "订阅",
+  "shared.demo.trae.pkgGroup.free": "免费",
+  "shared.demo.trae.officialUsage.errorExpired": "JWT 已过期，请重新登录后再查",
+  "shared.demo.trae.officialUsage.note": "口径：上游账号账本的累计消耗（含不经过本机网关的调用），无逐日/逐请求明细。",
   // ---- Trae：平台做不到的维度（置灰卡） ----
   "shared.demo.cap.travel": "自动旅行",
   "shared.demo.cap.travelReason": "Trae 客户端没有该活动接口，本工具也无对应后端实现。",

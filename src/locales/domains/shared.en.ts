@@ -144,6 +144,19 @@ export const en = {
   "shared.demo.trae.log.savedLogin": "Saved login state: user={uid} files={count}",
   "shared.demo.trae.log.jwtRefreshed": "JWT auto-refresh succeeded: user={uid} new expiry={hours}h",
   "shared.demo.trae.log.deviceReset": "Device identifier reset complete: {count} items applied",
+  // ---- Trae: official usage demo data (`get_trae_official_usage`) ----
+  // Package and group names come from real upstream strings (`display_desc` / `group_name`)
+  // so the demo site and a real machine render identically.
+  "shared.demo.trae.pkg.checkin": "Check-in reward",
+  "shared.demo.trae.pkg.login": "Monthly login gift",
+  "shared.demo.trae.pkg.purchased": "Purchased plan",
+  "shared.demo.trae.pkg.free": "Free quota",
+  "shared.demo.trae.pkgGroup.checkin": "Daily check-in",
+  "shared.demo.trae.pkgGroup.login": "Monthly login credits",
+  "shared.demo.trae.pkgGroup.subscription": "Subscription",
+  "shared.demo.trae.pkgGroup.free": "Free",
+  "shared.demo.trae.officialUsage.errorExpired": "JWT expired — sign in again to query",
+  "shared.demo.trae.officialUsage.note": "Scope: cumulative consumption on the upstream account ledger (including calls that bypass the local gateway); no per-day or per-request breakdown.",
   // ---- Trae: unsupported capabilities (greyed-out cards) ----
   "shared.demo.cap.travel": "Auto travel",
   "shared.demo.cap.travelReason": "The Trae client has no API for that activity, and this tool has no matching backend implementation.",
