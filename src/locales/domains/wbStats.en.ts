@@ -205,6 +205,8 @@ export const en = {
   "wbStats.gateway.noModels": "No model data.",
   "wbStats.gateway.modelTitle": "{name} · context {context} · max output {max}",
   "wbStats.gateway.modelIdTip": "Model ID: {id} (use this in API keys / client config)",
+  "wbStats.gateway.creditTitle": "Credit multiplier {value} (lower is cheaper)",
+  "wbStats.gateway.creditNone": "Upstream provides no credit multiplier",
   "wbStats.gateway.free": "Free",
   "wbStats.gateway.createKey": "Create API Key",
   "wbStats.gateway.noKeys": "No API Keys created yet.",

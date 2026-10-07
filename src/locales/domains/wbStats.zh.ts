@@ -210,6 +210,8 @@ export const zh = {
   "wbStats.gateway.noModels": "暂无模型数据。",
   "wbStats.gateway.modelTitle": "{name} · 上下文 {context} · 最大输出 {max}",
   "wbStats.gateway.modelIdTip": "模型 ID：{id}（配置 API Key / 客户端时填这个）",
+  "wbStats.gateway.creditTitle": "积分倍率 {value}（越低越省）",
+  "wbStats.gateway.creditNone": "上游未提供积分倍率",
   "wbStats.gateway.free": "免费",
   "wbStats.gateway.createKey": "创建 API Key",
   "wbStats.gateway.noKeys": "尚未创建 API Key。",

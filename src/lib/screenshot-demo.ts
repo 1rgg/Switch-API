@@ -636,6 +636,21 @@ function demoCatalog(region: Region): CatalogSnapshot {
   const models = region === "global"
     ? ["GPT-5.6", "Claude-Sonnet-4.5", "Gemini-3-Pro", "GLM-5.3", "DeepSeek-V4-Pro"]
     : ["GLM-5.3", "GLM-5.2", "DeepSeek-V4-Pro", "Kimi-K3", "hy3"];
+  /**
+   * 积分倍率。
+   *
+   * ⚠️ 这里必须给**真实形状**的值（`x0.79` / `x0.00 credits`），不能塞文案
+   * （早先误塞过 `t("shared.demo.catalog.limitedFree")` = 「限时免费」）。
+   * 展示层会从字符串里抠数值来决定倍率档位与颜色，文案进去抠不出数字，
+   * 于是每条模型都退化成「上游未提供积分倍率」的 `—` 占位 ——
+   * 演示页看起来像功能坏了，而实际是假数据不像真数据。
+   *
+   * 取值照 `~/.buddy-switch/gateway_models.*.json` 的实际分布来：
+   * 国内版集中在 0.00–1.62，国际版跨 0.00–6.67，好让四档颜色都出现。
+   */
+  const credits = region === "global"
+    ? ["x0.34", "x1.62", "x0.00 credits", "x1.39", "x6.67"]
+    : ["x0.79", "x0.52", "x0.00 credits", "x1.62", "x0.06"];
   return {
     region,
     source: region === "global" ? "cached" : "live",
@@ -646,9 +661,11 @@ function demoCatalog(region: Region): CatalogSnapshot {
       context_window: 131072,
       max_tokens: 8192,
       supports_images: index % 3 === 0,
-      credits: index % 4 === 0 ? t("shared.demo.catalog.limitedFree") : null,
+      credits: credits[index % credits.length],
       badges: index === 0 ? [t("shared.demo.catalog.promo")] : [],
-      free: index % 4 === 0,
+      // 倍率为 0 的那条才是免费；与倍率数据保持一致，别让「免费」徽标
+      // 与倍率数字互相矛盾。
+      free: /x0\.00/.test(credits[index % credits.length] ?? ""),
     })),
     note: region === "global" ? t("shared.demo.catalog.globalStale") : null,
   };

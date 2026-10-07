@@ -100,7 +100,8 @@ export const zh = {
   "shared.demo.session.characterAudio": "补全角色成语双音频",
   "shared.demo.session.accountCard": "统一账号卡片视觉和交互",
   // ---- 模型目录 ----
-  "shared.demo.catalog.limitedFree": "限时免费",
+  // 注：`credits` 演示值改为真实形状（`x0.79` 等）后，「限时免费」文案不再需要
+  // —— 倍率为 0 的条目由倍率本身的 `x0.00` 表达，另挂 `free` 徽标。
   "shared.demo.catalog.promo": "促销",
   "shared.demo.catalog.globalStale": "上游接口可能已变更，当前展示上次成功缓存",
   // ---- 账号策略 ----

@@ -84,7 +84,8 @@ export const en = {
   "shared.demo.session.characterAudio": "Complete the character idiom dual audio",
   "shared.demo.session.accountCard": "Unify account card visuals and interactions",
   // ---- Model catalog ----
-  "shared.demo.catalog.limitedFree": "Limited-time free",
+  // Note: `limitedFree` was dropped once demo `credits` took its real shape
+  // (`x0.79` …) — a zero multiplier is now expressed by `x0.00` plus the `free` badge.
   "shared.demo.catalog.promo": "Promo",
   "shared.demo.catalog.globalStale": "The upstream API may have changed; showing the last successful cache",
   // ---- Account strategy ----
