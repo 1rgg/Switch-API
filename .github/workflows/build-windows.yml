@@ -1,0 +1,143 @@
+name: build-windows
+
+# =============================================================================
+# Windows 安装包构建（本仓库自用）
+#
+# ## 为什么单独一个工作流，而不是直接用上游的 build.yml
+#
+# 上游 `build.yml` 与本仓库有三个不兼容的硬依赖：
+#
+#   1. `src-tauri/tauri.conf.json` 的 `createUpdaterArtifacts: true` 让 updater
+#      签名私钥成为**打包硬依赖**。没有 `TAURI_SIGNING_PRIVATE_KEY` 时，
+#      `tauri build` 会先跑完 ~5 分钟 Rust 编译，最后才抛
+#      "A public key has been found, but no private key" 并 exit 1。
+#      上游自己也知道这点，所以专门加了 Preflight 步骤提前拦 —— 但在本仓库
+#      没有那把密钥，那个 Preflight 必然失败。
+#
+#   2. 上游只在 `push: tags: ["v*"]` 时发 GitHub Release，且要往 npmjs
+#      发布平台包（`publish-platform` / `publish-main`），需要 `NPM_TOKEN`。
+#      本仓库只要一个能下载的安装包，不需要这些。
+#
+#   3. `pages.yml` 部署的是官方只读演示站，与本仓库无关。
+#
+# 因此这里**不动上游的 build.yml / pages.yml**（保持它们原样，以后同步上游
+# 不会冲突），另加这一份只做 Windows 安装包、不签名、不发 Release 的工作流。
+# 本工作流通过下方 `patch` 步骤临时关掉 `createUpdaterArtifacts`，
+# **不改仓库里 committed 的 tauri.conf.json**（那是上游签名链的一部分，
+# 改了会与上游漂移，也会让本地打包行为不一致）。
+#
+# 产物：Artifacts 里的 `BuddySwitch-windows-installer`，解压即得
+# `BuddySwitch_<version>_x64-setup.exe`。
+#
+# ## 触发方式
+#
+#   - 手动：Actions → build-windows → Run workflow（推荐，第一次就用这个）
+#   - push 到 main 且改动 src-tauri / crates / src 时自动跑
+# =============================================================================
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "crates/**"
+      - "public/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.ts"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/build-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Windows installer (x64)
+    runs-on: windows-latest
+    # 首次冷编译（无 cargo 缓存）约 20-30 分钟；有缓存后约 5-8 分钟。
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # windows-latest runner 预装了 Rust 稳定版与 MSVC 工具链，
+      # 这里显式声明只为锁定行为、并确保 add 上 x64-msvc target。
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: x86_64-pc-windows-msvc
+
+      # cargo 缓存：依赖 + 编译产物，增量编译大幅提速（Cargo.lock 不变时命中）
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # 关掉 updater 签名产物 —— 见文件头的「为什么」。
+      # 只改工作区里的这份文件，绝不提交回仓库。
+      - name: Disable updater signing artifacts
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const p = "src-tauri/tauri.conf.json";
+            const conf = JSON.parse(fs.readFileSync(p, "utf8"));
+            conf.bundle.createUpdaterArtifacts = false;
+            fs.writeFileSync(p, JSON.stringify(conf, null, 2) + "\n");
+            console.log("createUpdaterArtifacts =>", conf.bundle.createUpdaterArtifacts);
+          '
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      # NSIS 安装包。tauri CLI 会按需自动下载 NSIS 与 WiX。
+      - name: Build Tauri app (NSIS)
+        run: npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis
+
+      - name: Locate installer
+        shell: bash
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          echo "package.json version: $VER"
+          ROOT="target/x86_64-pc-windows-msvc/release/bundle/nsis"
+          echo "--- bundle dir ---"
+          find "$ROOT" -type f 2>/dev/null | sort || true
+          SETUP=$(find "$ROOT" -type f -name '*-setup.exe' | head -1)
+          if [ -z "$SETUP" ]; then
+            echo "::error::未找到 NSIS 安装包（*-setup.exe）"
+            exit 1
+          fi
+          echo "installer: $SETUP"
+          mkdir -p out
+          cp "$SETUP" out/
+          # 同时保留裸 exe（未打进安装包的桌面主程序），便于免安装试跑
+          APP_EXE="target/x86_64-pc-windows-msvc/release/BuddySwitch.exe"
+          if [ -f "$APP_EXE" ]; then
+            cp "$APP_EXE" out/
+          fi
+          ls -la out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BuddySwitch-windows-installer
+          path: out/
+          if-no-files-found: error
+          # 安装包通常几十 MB，留 30 天够用
+          retention-days: 30

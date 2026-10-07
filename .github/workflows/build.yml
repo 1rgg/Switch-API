@@ -1,0 +1,512 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Which platform to build. win-x64 produces a test installer without a GitHub Release."
+        type: choice
+        default: all
+        options:
+          - all
+          - win-x64
+          - mac-arm64
+          - mac-x64
+          - linux-x64
+
+permissions:
+  contents: write
+
+jobs:
+  select-matrix:
+    name: Select platforms
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          all_platforms = [
+              {
+                  "name": "mac-arm64",
+                  "os": "macos-14",
+                  "target": "aarch64-apple-darwin",
+                  "cli_bin": "buddy-switch-darwin-arm64",
+                  "platform_tag": "darwin-arm64",
+                  "bundles": "app",
+                  "update_os": "macos",
+                  "update_arch": "aarch64",
+                  "update_bundle": "macos",
+                  "update_archive_name": "BuddySwitch-macos-aarch64.app.tar.gz",
+              },
+              {
+                  "name": "mac-x64",
+                  "os": "macos-14",
+                  "target": "x86_64-apple-darwin",
+                  "cli_bin": "buddy-switch-darwin-x64",
+                  "platform_tag": "darwin-x64",
+                  "bundles": "app",
+                  "update_os": "macos",
+                  "update_arch": "x86_64",
+                  "update_bundle": "macos",
+                  "update_archive_name": "BuddySwitch-macos-x86_64.app.tar.gz",
+              },
+              {
+                  "name": "win-x64",
+                  "os": "windows-latest",
+                  "target": "x86_64-pc-windows-msvc",
+                  "cli_bin": "buddy-switch-win32-x64.exe",
+                  "platform_tag": "win32-x64",
+                  "bundles": "nsis",
+                  "update_os": "windows",
+                  "update_arch": "x86_64",
+                  "update_bundle": "nsis",
+                  "update_archive_name": "BuddySwitch-windows-x86_64-setup.exe",
+              },
+              {
+                  "name": "linux-x64",
+                  "os": "ubuntu-latest",
+                  "target": "x86_64-unknown-linux-gnu",
+                  "cli_bin": "buddy-switch-linux-x64",
+                  "platform_tag": "linux-x64",
+                  "bundles": "deb,appimage",
+                  "update_arch": "",
+              },
+              {
+                  # ⚠️ **只编 CLI，不编桌面 App**（`bundles` 为空 ⇒ 跳过 `Build desktop app`）。
+                  # 桌面 App 走 Tauri，需要 webkit2gtk；在 x64 runner 上交叉编译 arm64 版
+                  # 要开 dpkg 多架构 + 装 `libwebkit2gtk-4.1-dev:arm64`，代价高且易碎，
+                  # 而收益很小（本项目的桌面端不支持该平台）。
+                  # webui 形态是纯 Rust CLI（依赖只有 rustls / rusqlite-bundled），
+                  # 交叉编译很干净 —— 所以这个平台**只发 npm 平台包与 Release 裸二进制**。
+                  "name": "linux-arm64",
+                  "os": "ubuntu-latest",
+                  "target": "aarch64-unknown-linux-gnu",
+                  "cli_bin": "buddy-switch-linux-arm64",
+                  "platform_tag": "linux-arm64",
+                  "bundles": "",
+                  "update_arch": "",
+              },
+          ]
+          event = os.environ.get("EVENT_NAME", "")
+          platform = (os.environ.get("PLATFORM") or "all").strip()
+          if event != "workflow_dispatch" or platform in ("", "all"):
+              selected = all_platforms
+          else:
+              selected = [p for p in all_platforms if p["name"] == platform]
+              if not selected:
+                  raise SystemExit(f"unknown platform: {platform}")
+          matrix = json.dumps({"include": selected})
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a", encoding="utf-8") as f:
+              f.write("matrix<<EOF\n")
+              f.write(matrix + "\n")
+              f.write("EOF\n")
+          PY
+
+  build:
+    name: ${{ matrix.name }}
+    needs: select-matrix
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    # linux-arm64 是**交叉编译**（runner 只有 x64）。两条变量都只对
+    # `aarch64-unknown-linux-gnu` 这一个目标生效，不会干扰其它平台的原生构建。
+    env:
+      # Rust 链接器
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      # `rusqlite` 走 `bundled` feature ⇒ `libsqlite3-sys` 会用 `cc` **现场编译**
+      # SQLite 的 C amalgamation。不指定交叉 C 编译器，`cc` 就拿 host gcc 产出
+      # x86_64 目标文件 → 链接期报 "file in wrong format"。
+      CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+      PKG_CONFIG_ALLOW_CROSS: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          # ⚠️ 不要在这里加 `build-warnings` —— `@v1`（tag）**没有这个输入**。
+          # 2026-09-22 实测：四个 job 各报一次
+          #   Unexpected input(s) 'build-warnings', valid inputs are
+          #   ['toolchain','target','components','cache',…,'rustflags','override','rust-src-dir']
+          # 当时是照 action 的 `main` 分支 action.yml 写的（那上面确实有该输入、
+          # 默认 "deny"），据此得出「CI 默认把警告当错误」的结论 —— **那是错的**，
+          # 已撤掉。本仓目前也没有别的地方把警告升级为错误：
+          # 无 `-D warnings`、无 `#![deny(...)]`、无 `.cargo/config.toml` 的 rustflags。
+          # 若确实想要「零警告」门禁，v1 支持的写法是：
+          #   rustflags: "-D warnings"   或 job 级 env: CARGO_BUILD_WARNINGS: deny
+          # 但两者都会波及依赖的 build script（通常被 cap-lints 兜住），
+          # 先在 linux-x64 / mac-arm64 / mac-x64 三个目标上验过再开。
+
+      # cargo 缓存：依赖 + 编译产物，增量编译大幅提速（Cargo.lock 不变时命中）
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # `gcc-aarch64-linux-gnu` 是 linux-arm64 交叉编译的链接器/交叉 C 编译器
+      # （配合上面的 job env）；其余几个是 Tauri 桌面端要的，linux-arm64 用不到但装了无害。
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gcc-aarch64-linux-gnu
+
+      # dmgbuild writes Finder metadata without opening Finder, so DMGs keep
+      # their large icons and drag arrow in headless macOS runners.
+      - name: Set up Python for dmgbuild
+        if: runner.os == 'macOS'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dmgbuild (macOS only)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          DMGBUILD_VENV="$RUNNER_TEMP/dmgbuild-venv"
+          python3 -m venv "$DMGBUILD_VENV"
+          "$DMGBUILD_VENV/bin/python" -m pip install --disable-pip-version-check --no-input \
+            "dmgbuild==1.6.7"
+          echo "$DMGBUILD_VENV/bin" >> "$GITHUB_PATH"
+
+      # 版本号唯一来源：tag 触发时 tag 是唯一真相；非 tag 触发按打包时刻生成
+      # <YYYY>.<M>.<DHHMM>（与本地打包同一份规则，见 scripts/stamp-version.mjs）。
+      #
+      # ⚠️ 必须**不带 `--print`** 调用。`--print` 是 printOnly：只打印、不写入任何
+      # 版本载体。只取一个变量而不落盘时，Tauri 会继续用仓库里 committed 的旧版本
+      # 命名产物（`BuddySwitch_<旧版本>_x64-setup.exe`），而后续断言/清单用的是新算出的
+      # 值 → Windows 的 `Build desktop app` 里的陈旧包守卫必然触发 `exit 1`。
+      # 放在这里（而非打包那一步）是为了让「server 二进制 / 桌面 App / updater 清单」
+      # 三步拿到**同一个** VER —— VER 经 GITHUB_ENV 向后传递。
+      - name: Stamp version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME#v}" =~ ^[0-9] ]]; then
+            sh scripts/stamp-version.sh --tag "$GITHUB_REF_NAME"
+          else
+            sh scripts/stamp-version.sh
+          fi
+          VER=$(node -p "require('./package.json').version")
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          echo "stamped version: $VER"
+
+      # `tauri.conf.json` 的 `createUpdaterArtifacts: true` 使签名私钥成为**打包硬依赖**：
+      # 少了它，`tauri build` 会先跑完 ~5 分钟的 Rust 编译，最后才抛一句难定位的错。
+      # 这里提前把它变成一句明确的话 —— 要改的是**仓库 Settings → Secrets**，不是代码。
+      # 只打印长度，绝不回显密钥内容。
+      - name: Preflight - updater signing key
+        # 四个 job 都要查：缺密钥时 `tauri build` 会在**打包阶段**统一失败，与平台无关。
+        # 2026-09-22 本机实测（不加该变量、Windows/nsis）：安装包已完整打出来，
+        # 紧接着签名器报
+        #   A public key has been found, but no private key. Make sure to set
+        #   `TAURI_SIGNING_PRIVATE_KEY` environment variable.
+        # 然后 exit 1 —— 也就是说整轮编译白跑，正是这条 Preflight 要省掉的时间。
+        # 早先只对 `matrix.update_arch != ''` 的 job 检查是**错的**：linux-x64 的
+        # `Build desktop app` 也在同一处挂掉（它跑了 7m25s，形状就是编完才死），
+        # 而它的日志需要管理员权限才拿得到、注解里只有一句 exit code 1。
+        # 密钥配好后本步骤是纯 no-op，不会给任何 job 引入新的失败。
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::缺少 secret TAURI_SIGNING_PRIVATE_KEY：createUpdaterArtifacts=true 需要它才能产出 .sig（内容取本机 ~/.buddy-switch/buddy-switch-updater.key，配套 TAURI_SIGNING_PRIVATE_KEY_PASSWORD）"
+            exit 1
+          fi
+          echo "签名密钥已配置（${#KEY} 字符，不回显内容）"
+
+      # 前端构建产物（CLI 二进制 rust-embed 嵌入 + Tauri App 使用）
+      - name: Build frontend
+        run: |
+          npm install
+          npm run build
+
+      # CLI 二进制
+      - name: Build server binary
+        shell: bash
+        run: |
+          cargo build -p buddy-switch-server --release --target ${{ matrix.target }}
+          mkdir -p dist-bin
+
+      # CLI 裸二进制：npm 平台包需要它（装进 `npm/platform/*/bin/<cli_bin>`）。
+      # 原先由紧随其后的 npm 发布步骤就地拷贝；npm 发布已抽成独立的 `publish-platform`
+      # job（与 Release 解耦，理由见该 job 的注释），所以这里把它**一并打进 artifact**，
+      # 供那个 job 取用。
+      # ⚠️ 文件名必须等于 matrix 的 `cli_bin`（那个 job 按这个名字取）；
+      #   `release` job 会把它从 Release 资产里剔除 —— Release 只留桌面 App。
+      - name: Stage CLI binary for npm
+        shell: bash
+        run: |
+          SRC="target/${{ matrix.target }}/release/buddy-switch"
+          [ -f "$SRC.exe" ] && SRC="$SRC.exe"
+          test -f "$SRC"
+          cp "$SRC" "dist-bin/${{ matrix.cli_bin }}"
+          ls -l "dist-bin/${{ matrix.cli_bin }}"
+
+      # 桌面 App（mac app / nsis exe / deb + AppImage）
+      # `bundles` 为空的平台（linux-arm64）不编桌面 App —— 见 select-matrix 里的注释。
+      # 它仍然产出 CLI 裸二进制（`Build server binary` 不受本条件影响）。
+      - name: Build desktop app
+        if: matrix.bundles != ''
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          # 版本号由 scripts/stamp-version.sh 统一推导（本地与 CI 同一份规则）。
+          # tag 触发时 tag 是唯一真相；非 tag 触发按打包时刻生成 <YYYY>.<M>.<DHHMM>。
+          # 注意必须是 3 段：Cargo 拒绝 4 段 semver（`2026.9.18.1214` 会编译失败）。
+          # VER 由前面的 `Stamp version` 步骤写入 GITHUB_ENV，本步骤直接读 $VER。
+          # ⚠️ 不要在这里「重新推导」：`stamp-version.sh --print` **只打印不写入**，
+          # 而且分散在多步里独立调用可能跨分钟边界拿到不同的值 ——
+          # 那样产出的安装包名与后面的断言/清单就会互相对不上。
+          BUNDLE_ROOT="target/${{ matrix.target }}/release/bundle"
+          # cargo cache 会保留旧 NSIS/DMG/AppImage；不清理就会把旧产物带进 Release。
+          rm -rf "$BUNDLE_ROOT"
+          npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          echo "bundle after build:"
+          find "$BUNDLE_ROOT" -type f | sort || true
+          if [ "${{ matrix.bundles }}" = "nsis" ]; then
+            STALE=$(find "$BUNDLE_ROOT" -type f -name '*-setup.exe' ! -name "BuddySwitch_${VER}_x64-setup.exe" || true)
+            if [ -n "$STALE" ]; then
+              echo "error: stale Windows installer still present:" >&2
+              printf '%s\n' "$STALE" >&2
+              exit 1
+            fi
+            test -f "$BUNDLE_ROOT/nsis/BuddySwitch_${VER}_x64-setup.exe"
+          fi
+          find "$BUNDLE_ROOT" -type f \
+            \( -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name '*.deb' \
+            -o -name '*.AppImage' \) \
+            -exec cp {} dist-bin/ \;
+          # mac：纯命令行打 dmg（CI 无 Finder，Tauri 自带的 bundle_dmg.sh 会失败）
+          if [ "${{ matrix.bundles }}" = "app" ]; then
+            sh scripts/make-dmg.sh "$VER" "${{ matrix.update_arch }}" "target/${{ matrix.target }}/release/bundle/macos/BuddySwitch.app"
+            cp "BuddySwitch_${VER}_${{ matrix.update_arch }}.dmg" dist-bin/
+          fi
+
+      - name: Generate updater manifest
+        if: matrix.update_arch != ''
+        shell: bash
+        env:
+          UPDATE_OS: ${{ matrix.update_os }}
+          UPDATE_ARCH: ${{ matrix.update_arch }}
+          UPDATE_ARCHIVE_NAME: ${{ matrix.update_archive_name }}
+          BUNDLE_DIR: target/${{ matrix.target }}/release/bundle/${{ matrix.update_bundle }}
+        run: |
+          # 与 Build desktop app 同一份规则：必须用同一个 VER，
+          # 否则 updater 资产名会与上一步产出的安装包名对不上。
+          # VER 由前面的 `Stamp version` 步骤写入 GITHUB_ENV，本步骤直接读 $VER。
+          # ⚠️ 不要在这里「重新推导」：`stamp-version.sh --print` **只打印不写入**，
+          # 而且分散在多步里独立调用可能跨分钟边界拿到不同的值 ——
+          # 那样产出的安装包名与后面的断言/清单就会互相对不上。
+          echo "updater bundle dir: $BUNDLE_DIR (version $VER)"
+          ls -la "$BUNDLE_DIR" || true
+          if [ "$UPDATE_OS" = "windows" ]; then
+            ARCHIVE="$BUNDLE_DIR/BuddySwitch_${VER}_x64-setup.exe"
+          else
+            ARCHIVE="$(find "$BUNDLE_DIR" -maxdepth 1 -type f -name '*.app.tar.gz' | sort)"
+            COUNT=$(printf '%s\n' "$ARCHIVE" | sed '/^$/d' | wc -l | tr -d ' ')
+            if [ "$COUNT" != 1 ]; then
+              echo "error: expected exactly 1 .app.tar.gz, found $COUNT" >&2
+              printf '%s\n' "$ARCHIVE" >&2
+              exit 1
+            fi
+          fi
+          if [ ! -f "$ARCHIVE" ] || [ ! -f "$ARCHIVE.sig" ]; then
+            echo "error: missing signed updater archive ($ARCHIVE)" >&2
+            exit 1
+          fi
+          cp "$ARCHIVE" "dist-bin/$UPDATE_ARCHIVE_NAME"
+          cp "$ARCHIVE.sig" "dist-bin/$UPDATE_ARCHIVE_NAME.sig"
+          if [ "$UPDATE_OS" = "windows" ]; then
+            cmp -s "dist-bin/$UPDATE_ARCHIVE_NAME" "dist-bin/BuddySwitch_${VER}_x64-setup.exe"
+          fi
+          UPDATE_VERSION="$VER" sh scripts/gen-update-json.sh
+          MANIFEST="$BUNDLE_DIR/latest-${UPDATE_OS}-${UPDATE_ARCH}.json"
+          test -f "$MANIFEST"
+          cp "$MANIFEST" dist-bin/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist-bin/
+          if-no-files-found: error
+
+  # npm 平台包发布 —— **与 Release 解耦**。
+  #
+  # 原先这一步在 `build` job 内部、且排在 `Build desktop app` **之前**：只要 npm 发布失败
+  # （最典型是 `NPM_TOKEN` 未配置），桌面端产物就不会上传，`release` 又因 `needs: build`
+  # 被跳过 —— 二进制发布被 npm 发布拖累。两者本应互不依赖：
+  # CLI 二进制走 npm registry，Release 只留桌面 App（这正是原注释写明的前提）。
+  # 拆开后：npm 失败只影响本 job，Release 照常产出。
+  #
+  # `runs-on: ubuntu-latest` 是**刻意**的 —— npm publish 与系统无关；
+  # 复用 `select-matrix` 的 matrix 只为取 `platform_tag` / `cli_bin` 这两个唯一真源，
+  # 不另抄一份平台清单（抄了必然漂移）。
+  publish-platform:
+    name: npm platform ${{ matrix.name }}
+    needs: [select-matrix, build]
+    # `vars.PUBLISH_NPM` 是 npm 发布通道的总开关（仓库 Settings → Variables）。
+    # 未配置 / 不等于 'true' ⇒ 整个 npm 通道跳过（job 显示 skipped，不再是 failure）。
+    # 为什么需要它：npmjs 账号注册/访问受限期间，没有 `NPM_TOKEN` 可配，
+    # 每次 tag 都会红 4 个 job、`publish-main` 被 skip —— 那不是事故，是噪音，
+    # 却会把「这次 Release 到底成没成」的判断搅浑（Release 本身一直是 success）。
+    # 恢复发布时只需把变量置为 'true' 并配好 `NPM_TOKEN`，无需改回本文件。
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PUBLISH_NPM == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 只下本平台那一个 artifact（linux 那个有 ~100MB，不必全下）
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist-bin
+
+      - name: Publish platform package
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # 先让打包脚本**落盘**再读回：tag 是唯一真相，
+          # 不自己拼版本号（拼出来的会和产物名/主包 optionalDependencies 对不上）。
+          sh scripts/stamp-version.sh --tag "${{ github.ref_name }}"
+          VER=$(node -p "require('./package.json').version")
+          PKG_DIR="npm/platform/buddy-switch-${{ matrix.platform_tag }}"
+          # 平台包自己的 version 也必须已同步（stamp 脚本负责），断言一下免得静默发错版本
+          test "$(node -p "require('./${PKG_DIR}/package.json').version")" = "$VER"
+          mkdir -p "$PKG_DIR/bin"
+          cp "dist-bin/${{ matrix.cli_bin }}" "$PKG_DIR/bin/${{ matrix.cli_bin }}"
+          cd "$PKG_DIR"
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > .npmrc
+          npm publish --access public --registry=https://registry.npmjs.org
+
+  # 所有平台包发布成功后，发布主包（optionalDependencies 引用平台包）
+  # 刻意 `needs: [build, publish-platform]`：主包必须在平台包都上架后再发，
+  # 否则存在「装了主包却拉不到平台包」的窗口。这**不会**拖累 Release ——
+  # `release` 只 `needs: build`。
+  publish-main:
+    name: Publish npm main package
+    needs: [build, publish-platform]
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PUBLISH_NPM == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Publish main package
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # 主包的 version 与它的 optionalDependencies（各平台包）必须**同时**等于本次 tag，
+          # 否则用户装到的主包会去找一个不存在的平台包版本。
+          # 原先这一步没有落盘版本戳 —— tag 路径从未真正跑过，所以一直没暴露。
+          sh scripts/stamp-version.sh --tag "${{ github.ref_name }}"
+          export VER=$(node -p "require('./package.json').version")
+          test "$(node -p "require('./npm/package.json').version")" = "$VER"
+          node -e 'const p=require("./npm/package.json");const bad=Object.entries(p.optionalDependencies||{}).filter(([k,v])=>v!==process.env.VER);if(bad.length){console.error("optionalDependencies 与主包版本不一致:",bad);process.exit(1)}'
+          cd npm
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > .npmrc
+          npm publish --access public --registry=https://registry.npmjs.org
+
+  release:
+    name: Publish release assets
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      # ⚠️ `fetch-depth: 0` + `fetch-tags: true` 是**生成变更说明的硬前提**。
+      # checkout 默认只拉当前提交（`depth: 1`）且不带其他 tag，于是
+      # `git log <上个 tag>..<本次 tag>` 会因为缺对象直接 `exit 128`
+      # （tag 推送触发的 checkout **只**取被推的那一个 tag）。
+      # 缺了它，`Generate release notes` 会走兜底分支：不报错、但正文没有变更清单。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # 变更说明用 Node 脚本生成（与 scripts/ 下其他 .mjs 同一套运行时）。
+      # 与 `build` / `publish-*` 各 job 显式声明版本号保持一致，不吃 runner 预装版本。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # artifact 里含一份 CLI 裸二进制（build job 的 `Stage CLI binary for npm` 放的）。
+      # 它的归属取决于 npm 通道是否开启：
+      #   - 开（PUBLISH_NPM=true）：二进制已随平台包发到 npm registry，这里是**中转物**，
+      #     按小写前缀 `buddy-switch-` 精确剔除，Release 只留桌面 App + updater 清单
+      #     （桌面产物都是 `BuddySwitch…` 大写开头，不会误删）。
+      #   - 关（当前默认）：npm 发不出去，那这份二进制就是**唯一的 webui 分发渠道** ——
+      #     必须留在 Release 里让用户直接下载，否则 webui 形态等于没有发布途径。
+      # ⚠️ 别改成无条件保留：桌面端走 Tauri updater，与这些裸二进制无关，
+      #    而 `merge-update-manifests.py` 只 glob `latest-*.json`，留着也不会污染更新清单。
+      - name: Drop npm-only CLI payloads
+        if: vars.PUBLISH_NPM == 'true'
+        run: |
+          ls -1 artifacts
+          rm -f artifacts/buddy-switch-*
+          echo "--- after drop ---"
+          ls -1 artifacts
+
+      - name: Merge updater manifests
+        run: python3 scripts/merge-update-manifests.py artifacts
+
+      # Release 正文（「本次发布了什么」）—— 完全由提交本身推导：
+      # `<上一个 tag>..<本次 tag>` 之间的提交，按 Conventional Commits 前缀分组，
+      # 每组一行一项（只取提交首行，不搬提交正文 —— 正文是写给维护者的）。
+      #
+      # 为什么不用 `softprops/action-gh-release` 的 `generate_release_notes: true`：
+      # GitHub 那套生成的原料是 **Pull Request**（标题/标签/贡献者），而本仓是**直接
+      # 推 main**，实测那种情况下它只会给出一行 `**Full Changelog**: ...compare/...`
+      # —— 字面上「没有变化内容」。本仓提交恰好严格遵循 Conventional Commits
+      # （见 AGENTS.md → Git Commit Language），故自己分组更贴合。
+      # 细节与取舍 → `scripts/gen-release-notes.mjs` 头部注释。
+      #
+      # 脚本**不会**因为生成失败而让本步骤变红（失败退化为一段兜底说明 + `::warning::`
+      # 注解，退出码仍为 0）：说明缺失是**降级**，发布失败是**事故**，前者不该挡住后者。
+      # 需要人工措辞时，提交 `docs/releases/<tag>.md` —— 脚本会整篇采用、不做自动拼装。
+      - name: Generate release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/gen-release-notes.mjs --tag "$TAG" --out release-notes.md
+
+      # 用 `body_path` 而不是 `body`：正文是多行 Markdown，且含 `-` 开头的行，
+      # 走文件传递可完全避开 YAML / 表达式对换行与特殊字符的处理。
+      # ⚠️ `release-notes.md` 落在仓库根目录，**不会**被 `files: artifacts/*` 带进资产。
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          body_path: release-notes.md
