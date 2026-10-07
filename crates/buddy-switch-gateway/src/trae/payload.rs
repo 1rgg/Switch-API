@@ -922,6 +922,9 @@ mod tests {
             is_bypass,
             context_window,
             prompt_max_tokens: None,
+            credits: None,
+            discounted_credits: None,
+            has_activity_discount: false,
         }
     }
 }

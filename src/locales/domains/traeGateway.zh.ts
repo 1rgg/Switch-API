@@ -68,8 +68,14 @@ export const zh = {
   "trae.gateway.models.colEfforts": "支持的思考档位",
   "trae.gateway.models.colContext": "上下文长度",
   "trae.gateway.models.colMaxTokens": "最大输出",
-  // Trae 上游清单**没有**倍率字段 —— 这一列恒为「—」，标题要说明是「无此口径」而非「读不到」。
-  "trae.gateway.models.creditNotApplicable": "Trae 上游清单不提供每模型积分倍率（积分按账号积分包计）。",
+  // 倍率取自模型条目的 `features.consumption_rate.data.rate`（**嵌套**字段，2026-10-07 实测定）。
+  // `null`（上游没给）与 `0`（明确免费）必须分开显示。
+  "trae.gateway.models.creditNone": "上游未提供该模型的积分倍率（第三方 / 自定义路由条目通常没有）。",
+  "trae.gateway.models.creditTitle": "基础倍率 x{value}（不含会员折扣与限时活动）。",
+  "trae.gateway.models.creditFree": "免费",
+  "trae.gateway.models.creditDiscounted": "折后 x{value}",
+  "trae.gateway.models.creditDiscountedTip": "会员折扣后的实际倍率 x{value}；上方的数字是基础倍率。",
+  "trae.gateway.models.creditActivity": "限时活动",
   "trae.gateway.models.effortNone": "该模型不在档位表中（上游不支持 reasoning_effort）。",
   "trae.gateway.models.effortFixed": "固定档：{effort}",
   "trae.gateway.models.effortDefaultTip": "默认档：{effort}",

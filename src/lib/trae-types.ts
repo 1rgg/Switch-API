@@ -770,6 +770,20 @@ export interface TraeClientModel {
   contextWindow: number | null;
   /** 单次回复上限；取不到为 `null`。 */
   promptMaxTokens: number | null;
+  /**
+   * **积分倍率**（上游 `features.consumption_rate.data.rate`）；取不到为 `null`。
+   *
+   * 上游把倍率放在 `features` 嵌套对象里，**不在**模型条目的顶层键上 ——
+   * 后端已挖出来（见 Rust 侧 `model_list::ClientModel::credits` 的字段注释）。
+   *
+   * ⚠️ `null` 与 `0` 语义**完全不同**：`null` = 上游没给（第三方 / 自定义路由
+   * 就没有），`0` = 上游明确说不消耗积分。渲染时必须分开，别把 `null` 显示成「x0」。
+   */
+  credits: number | null;
+  /** 会员折扣后的实际倍率（上游 `features.discount.data.consumption_rate`）；无折扣为 `null`。 */
+  discountedCredits: number | null;
+  /** 是否存在**限时**活动补贴（只透出有无，不透出活动价）。 */
+  hasActivityDiscount: boolean;
 }
 
 /**

@@ -1236,6 +1236,9 @@ function demoTraeClientModels(args?: Record<string, unknown>): TraeClientModelLi
     name: string,
     displayName: string,
     isDefault = false,
+    credits: number | null = null,
+    discountedCredits: number | null = null,
+    hasActivityDiscount = false,
   ): TraeClientModel => ({
     name,
     displayName,
@@ -1247,6 +1250,9 @@ function demoTraeClientModels(args?: Record<string, unknown>): TraeClientModelLi
     isBeta: false,
     contextWindow: 256000,
     promptMaxTokens: 224000,
+    credits,
+    discountedCredits,
+    hasActivityDiscount,
   });
 
   if (args?.variant === "trae_cn") {
@@ -1287,17 +1293,22 @@ function demoTraeClientModels(args?: Record<string, unknown>): TraeClientModelLi
     groups: [
       {
         function: "solo_work_lite",
-        models: [
-          model("Doubao-Seed-Evolving", "Seed-Evolving"),
-          model("Doubao-Seed-2.1-Pro", "Seed-2.1-Pro-0915"),
-          model("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash"),
-          model("glm-5.3", "GLM-5.3"),
-          model("kimi-k3", "Kimi-K3"),
-          // 真实客户端清单里每个分组都带这一条（`provider = "openrouter"`）——
-          // 演示数据也要有，否则「第三方路由条目被标成网关不提供」这条断言在演示下无从验证。
-          model("openrouter//stealth/ox-alpha", "ox-alpha"),
-        ],
-      },
+          models: [
+            // 倍率是**真机实测值**（见 Rust 侧 `ClientModel::credits`）——
+            // 演示数据若全填 null，就看不出「这一列现在真的有数」。
+            model("Doubao-Seed-Evolving", "Seed-Evolving", false, 0.8),
+            model("Doubao-Seed-2.1-Pro", "Seed-2.1-Pro-0915", false, 0.8),
+            model("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", false, 0.15, 0.08, true),
+            // 有会员折扣 ⇒ 同一格里出「基础倍率 + 折后」两个数。
+            model("glm-5.3", "GLM-5.3", false, 0.78, 0.39),
+            model("kimi-k3", "Kimi-K3", false, 1.83),
+            // 真实客户端清单里每个分组都带这一条（`provider = "openrouter"`）——
+            // 演示数据也要有，否则「第三方路由条目被标成网关不提供」这条断言在演示下无从验证。
+            // 倍率**刻意留 null**：实测这类条目上游不给倍率，界面应显示 `—`
+            // 而不是 `x0`（把 null 当 0 是本列最危险的错值）。
+            model("openrouter//stealth/ox-alpha", "ox-alpha"),
+          ],
+        },
       {
         function: "solo_coder",
         models: [model("Doubao-Seed-2.0-Code", "Doubao-Seed-2.0-Code", true)],

@@ -60,8 +60,14 @@ export const en = {
   "trae.gateway.models.colEfforts": "Supported effort tiers",
   "trae.gateway.models.colContext": "Context",
   "trae.gateway.models.colMaxTokens": "Max output",
-  // The Trae upstream list has **no** credit-rate field — this column is always "—", so the tooltip says "not applicable", not "unavailable".
-  "trae.gateway.models.creditNotApplicable": "The Trae upstream list has no per-model credit rate (credits are tracked per account package).",
+  // The rate comes from the model's `features.consumption_rate.data.rate` (**nested**, measured 2026-10-07).
+  // `null` (upstream omitted it) and `0` (explicitly free) must render differently.
+  "trae.gateway.models.creditNone": "Upstream provides no credit rate for this model (third-party / custom routes usually have none).",
+  "trae.gateway.models.creditTitle": "Base rate x{value} (excludes member discounts and limited-time activity).",
+  "trae.gateway.models.creditFree": "Free",
+  "trae.gateway.models.creditDiscounted": "After discount x{value}",
+  "trae.gateway.models.creditDiscountedTip": "Actual rate after the member discount is x{value}; the number above is the base rate.",
+  "trae.gateway.models.creditActivity": "Limited-time",
   "trae.gateway.models.effortNone": "This model is not in the tier table (upstream has no reasoning_effort support).",
   "trae.gateway.models.effortFixed": "Fixed: {effort}",
   "trae.gateway.models.effortDefaultTip": "Default tier: {effort}",

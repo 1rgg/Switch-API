@@ -86,6 +86,45 @@ pub struct ClientModel {
     pub context_window: Option<i64>,
     /// 单次回复上限（`prompt_max_tokens`），取不到为 `None`。
     pub prompt_max_tokens: Option<i64>,
+    /// **积分倍率**（`features.consumption_rate.data.rate`），取不到为 `None`。
+    ///
+    /// ## 字段位置（2026-10-07 实测确证，推翻了上一版「上游不提供倍率」的结论）
+    ///
+    /// 倍率**不在**模型条目的顶层键里 —— 它在 `features` 这个嵌套对象内：
+    ///
+    /// ```json
+    /// "features": {
+    ///   "consumption_rate": { "enable": true, "data": { "rate": 0.78 } },
+    ///   "discount": { "data": { "original_consumption_rate": 0.78,
+    ///                           "consumption_rate": 0.39, "member_discount": 50 } },
+    ///   "activity_discount": { "data": { "current": { "before_consumption_rate": 0.4,
+    ///                                                  "consumption_rate": 0.2, "discount": 50 },
+    ///                                    "member": {...}, "subsidy": {...} } }
+    /// }
+    /// ```
+    ///
+    /// 上一版之所以判定「Trae 没有倍率」，是因为只枚举了**顶层**字段名并搜
+    /// `credit|cost|price|rate` 关键词 —— 顶层字段名里一个都不含这些词，
+    /// 倍率整层被漏掉。**教训：搜「某能力有没有」不能只看顶层键名。**
+    ///
+    /// ## 为什么只取 `rate`，不取折扣
+    ///
+    /// `rate` 是**基础倍率**（用户实际按它扣积分）；会员折扣 / 活动补贴 /
+    /// 错峰折扣都是**乘数条件**，会随时间与身份变化（实测 `glm-5.3` 的
+    /// `discount` 给到 0.39，而错峰窗口按 `start_minute` 动态生效）。
+    /// 把它们折进去会得到一个「此刻数字」，用户拿去比价时反而被误导。
+    /// ⇒ 本字段只承载基础倍率；折扣若将来要展示，**另开字段**。
+    pub credits: Option<f64>,
+    /// 会员/活动折扣后的**实际倍率**（`features.discount.data.consumption_rate`）。
+    ///
+    /// 与 [`Self::credits`] 分开：`credits` 恒为基础倍率，本字段只在
+    /// 上游确实给了折扣时才为 `Some`，供界面标「折后」。
+    pub discounted_credits: Option<f64>,
+    /// 是否存在**限时活动**补贴（`features.activity_discount.data.current`）。
+    ///
+    /// 只透出「有/无」这个布尔量，**不**透出活动倍率：活动是限时的，
+    /// 把活动价当常规倍率展示，活动一结束界面就在说谎。
+    pub has_activity_discount: bool,
 }
 
 /// 一个 function 分组（`solo_work_lite` / `solo_coder` / `builder` …）。
@@ -419,7 +458,35 @@ fn parse_model(value: &Value) -> Option<ClientModel> {
             .and_then(|size| size.get("default"))
             .and_then(as_i64),
         prompt_max_tokens: value.get("prompt_max_tokens").and_then(as_i64),
+        credits: credit_rate(value, &["consumption_rate", "data", "rate"]),
+        discounted_credits: credit_rate(value, &["discount", "data", "consumption_rate"]),
+        has_activity_discount: value
+            .get("features")
+            .and_then(|f| f.get("activity_discount"))
+            .and_then(|a| a.get("data"))
+            .and_then(|d| d.get("current"))
+            .is_some_and(|c| c.is_object()),
     })
+}
+
+/// 从**嵌套** `features` 里按路径取一个倍率数值。
+///
+/// 路径是 `features` 之后的剩余键（例如 `["consumption_rate", "data", "rate"]`）。
+/// 逐层 `get` 而不是 `pointer` —— `pointer` 遇到键名里带 `/` 会静默失配，
+/// 且这里的路径是编译期常量，逐层取更直白。
+///
+/// **数值宽容**：上游把 `rate` 写成 JSON 数字，但也见过写成字符串的产品线
+/// （`"0.78"`）；两种都接受。`null` / 缺键 / 类型不对 / 非有限值一律 `None` ——
+/// 绝不回落成 `0.0`（那会被渲染成「免费」，是最危险的错值）。
+fn credit_rate(value: &Value, path: &[&str]) -> Option<f64> {
+    let mut node = value.get("features")?;
+    for key in path {
+        node = node.get(*key)?;
+    }
+    let rate = node
+        .as_f64()
+        .or_else(|| node.as_str().and_then(|text| text.trim().parse::<f64>().ok()))?;
+    rate.is_finite().then_some(rate)
 }
 
 /// 取字符串字段；类型不对或缺失一律回落空串（**绝不让脏值传到展示层**）。
@@ -678,4 +745,99 @@ mod tests {
         assert!(parse_groups("[1,2,3]").is_empty(), "顶层不是对象 ⇒ 空结果");
     }
 
+    /// ★★ 护栏：**积分倍率必须能从 `features` 里挖出来**（2026-10-07 实测修正）。
+    ///
+    /// 这条测试的存在本身就是一条教训：上一版判定「Trae 不提供倍率」，
+    /// 是因为只枚举了**模型条目的顶层字段名**并搜 `credit|cost|price|rate`
+    /// —— 顶层一个都不含这些词，倍率整层被漏掉。反例（改坏会红）：
+    /// 把 `credits` 的取值路径写回顶层 `value.get("rate")` ⇒
+    /// 这份真实形状的 fixture 会得到 `None`。
+    #[test]
+    fn parse_model_extracts_credit_rate_from_nested_features() {
+        let raw = r#"{
+            "solo_work_lite": [
+                {"name":"glm-5.3","features":{
+                    "consumption_rate":{"enable":true,"data":{"rate":0.78}},
+                    "discount":{"enable":true,"data":{
+                        "original_consumption_rate":0.78,
+                        "consumption_rate":0.39,
+                        "member_discount":50}}
+                }},
+                {"name":"kimi-k3","features":{
+                    "consumption_rate":{"enable":true,"data":{"rate":1.83}}}},
+                {"name":"nested-missing","features":{
+                    "consumption_rate":{"enable":true,"data":{}}}},
+                {"name":"no-features"}
+            ]
+        }"#;
+        let groups = parse_groups(raw);
+        let models = &groups[0].models;
+
+        assert_eq!(models[0].credits, Some(0.78), "基础倍率应取自 consumption_rate.data.rate");
+        assert_eq!(
+            models[0].discounted_credits,
+            Some(0.39),
+            "折后倍率应取自 discount.data.consumption_rate，且**不**覆盖基础倍率"
+        );
+        assert_eq!(models[1].credits, Some(1.83));
+        assert_eq!(models[1].discounted_credits, None, "没有 discount 块 ⇒ None，不是 0");
+        assert_eq!(models[2].credits, None, "data 里没有 rate ⇒ None");
+        assert_eq!(models[3].credits, None, "整个 features 缺失 ⇒ None");
+    }
+
+    /// ★★ 护栏：倍率**取不到时必须是 `None`，绝不能回落成 `0.0`**。
+    ///
+    /// 反例（改坏会红）：`unwrap_or(0.0)` ⇒ 界面上那批没有倍率的条目
+    /// （第三方 / 自定义路由）会被渲染成「x0」或「免费」—— 用户据此以为
+    /// 调用不花积分，是**最危险的错值**（错在「省钱」这一侧最难被发现）。
+    #[test]
+    fn credit_rate_never_falls_back_to_zero() {
+        let raw = r#"{
+            "g": [
+                {"name":"null-rate","features":{"consumption_rate":{"data":{"rate":null}}}},
+                {"name":"string-rate","features":{"consumption_rate":{"data":{"rate":"0.66"}}}},
+                {"name":"bogus-rate","features":{"consumption_rate":{"data":{"rate":"abc"}}}},
+                {"name":"obj-rate","features":{"consumption_rate":{"data":{"rate":{"x":1}}}}},
+                {"name":"bool-rate","features":{"consumption_rate":{"data":{"rate":false}}}},
+                {"name":"free","features":{"consumption_rate":{"data":{"rate":0}}}}
+            ]
+        }"#;
+        let groups = parse_groups(raw);
+        let m = &groups[0].models;
+
+        assert_eq!(m[0].credits, None, "null ⇒ None");
+        assert_eq!(m[1].credits, Some(0.66), "数字字符串要能解析（上游有产品线这么写）");
+        assert_eq!(m[2].credits, None, "非数字字符串 ⇒ None，不是 0");
+        assert_eq!(m[3].credits, None, "对象 ⇒ None");
+        assert_eq!(m[4].credits, None, "布尔 ⇒ None（`false` 不能当 0 用）");
+        // ★ 显式区分：真·0 倍率（上游明确给的）与「取不到」是两回事。
+        assert_eq!(m[5].credits, Some(0.0), "上游明写 0 就是 0；与「取不到」必须可区分");
+    }
+
+    /// 活动折扣**只透出布尔量**，不透出活动倍率（活动是限时的，当常规倍率展示会误导）。
+    #[test]
+    fn activity_discount_is_exposed_as_flag_only() {
+        let raw = r#"{
+            "g": [
+                {"name":"has-activity","features":{
+                    "consumption_rate":{"data":{"rate":0.2}},
+                    "activity_discount":{"data":{"current":{
+                        "discount_type":"subsidy",
+                        "before_consumption_rate":0.4,
+                        "consumption_rate":0.2,"discount":50}}}}},
+                {"name":"empty-activity","features":{
+                    "consumption_rate":{"data":{"rate":0.8}},
+                    "activity_discount":{"data":{"current":null}}}},
+                {"name":"plain","features":{
+                    "consumption_rate":{"data":{"rate":0.8}}}}
+            ]
+        }"#;
+        let groups = parse_groups(raw);
+        let m = &groups[0].models;
+
+        assert!(m[0].has_activity_discount, "有 current 对象 ⇒ true");
+        assert_eq!(m[0].credits, Some(0.2), "倍率仍是 consumption_rate 的值，不折进活动价");
+        assert!(!m[1].has_activity_discount, "current 为 null ⇒ false");
+        assert!(!m[2].has_activity_discount, "无 activity_discount ⇒ false");
+    }
 }

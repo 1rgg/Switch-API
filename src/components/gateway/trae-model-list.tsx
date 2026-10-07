@@ -92,12 +92,21 @@ function programRegion(variant: TraeVariantId): Region {
  * 合成一张大表会让「这条属于哪个 function」从分组标题掉进某一列，
  * 而这一列在参考页上并不存在，属于为了让版式统一而引入的新列。
  *
- * ## 积分倍率列在本侧恒为 `—`（**刻意**不显示数字）
+ * ## 积分倍率列：**有真实数据**（2026-10-07 修正，推翻上一版）
  *
- * Trae 的上游清单（`TraeClientModel`）**没有** `credits` 字段 —— 倍率是 WorkBuddy
- * 上游独有的口径。留这一列是**列结构对齐**（两页的列可以逐列对读），
- * 而不是去编一个数：Trae 的积分消耗在账号卡的「积分包」里按**包**计，
- * 与「每模型倍率」不是同一种东西，硬凑一个数会误导。
+ * 上一版这里写着「Trae 上游清单没有 `credits` 字段，本列恒为 `—`，留空位只为
+ * 列结构对齐」。**那个结论是错的，已在 2026-10-07 实测推翻。**
+ *
+ * 倍率一直都在，位置是 `features.consumption_rate.data.rate` —— 一个**嵌套
+ * 对象**里。上一轮排查之所以漏掉，是因为只枚举了模型条目的**顶层**字段名
+ * 再去搜 `credit|cost|price|rate` 关键词，而顶层 55 个字段名里一个都不含
+ * 这些词，整层被跳过。
+ *
+ * ⇒ **教训：判断「某能力有没有」不能只看顶层键名。** 复杂对象（`features`
+ * 这种）必须递归进去看，否则漏掉的是整块能力，而不是一个字段。
+ *
+ * 实测 TraeWork 客户端 32 个模型里 **26 个有倍率**（0.06–1.83），
+ * 没有的 6 个全是第三方 / 自定义路由条目。
  *
  * ## 「网关不提供」的行：默认**保留**（压暗 + 记号），可一键隐藏
  *
@@ -417,7 +426,7 @@ export function TraeModelList({
                                 <ModelCell model={model} servable={servable} />
                               </td>
                               <td className="py-3 pr-4">
-                                <CreditCell />
+                                <CreditCell model={model} />
                               </td>
                               <td className="py-3 pr-4">
                                 <DefaultEffortCell capability={capability} />
@@ -516,23 +525,113 @@ function ModelCell({ model, servable }: { model: TraeClientModel; servable: bool
 }
 
 /**
- * 「积分倍率」单元格：**本侧恒为 `—`**。
+ * 倍率分档：数字按「便宜 → 贵」着色，一眼看出哪个模型划算。
  *
- * Trae 上游清单没有倍率口径（见模块头「积分倍率列在本侧恒为 `—`」）。
- * 留这个空位是为了与 WorkBuddy 表逐列对齐，而不是去编一个数 ——
- * 编出来的数会让用户拿它去跟 WorkBuddy 侧比较，而两者根本不可比。
+ * **与 WorkBuddy 侧同一套断点（1 / 3）** —— 两页的倍率列可以直接逐行对读，
+ * 色阶语义必须一致，否则用户会以为「绿色」在两页代表不同的价位。
+ *
+ * 档位切点取自两版合并后的实测分布（Trae 实测 0.06–1.83，WorkBuddy 国内
+ * 0.00–1.62 / 国际 0.00–6.67）：断点落在 1 与 3，能让三档都有人落进去。
  */
-function CreditCell() {
+function creditTier(value: number): "free" | "low" | "mid" | "high" {
+  if (value <= 0) return "free";
+  if (value < 1) return "low";
+  if (value < 3) return "mid";
+  return "high";
+}
+
+/** 分档 → 边框/底色/文字色。刻意用 Tailwind 原色而非主题令牌：
+ *  这三档表达的是「便宜/中等/贵」的**绝对**语义，不该随主题令牌变。
+ *  **与 WorkBuddy 侧逐字相同**（见 `model-list.tsx` 的同名常量）。 */
+const CREDIT_TIER_CLASS: Record<ReturnType<typeof creditTier>, string> = {
+  free: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700",
+  low: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700",
+  mid: "border-amber-500/30 bg-amber-500/10 text-amber-700",
+  high: "border-rose-500/30 bg-rose-500/10 text-rose-700",
+};
+
+/**
+ * 「积分倍率」单元格。
+ *
+ * ## 2026-10-07：本列从恒为 `—` 改为**真实倍率**（推翻了上一版的裁定）
+ *
+ * 上一版在这里写了一整段「Trae 上游清单没有倍率口径，留空位只为列结构对齐」。
+ * **那个结论是错的** —— 倍率一直都在，只是藏在 `features` 这个**嵌套对象**里，
+ * 而上一轮的排查只枚举了模型条目的**顶层**字段名并搜 `credit|cost|price|rate`
+ * 关键词，顶层一个都不含这些词，整层被漏掉。后端现已挖出
+ * （见 Rust 侧 `ClientModel::credits` 的字段注释）。
+ *
+ * ## `null` 与 `0` 必须分开（与 WorkBuddy 侧同一条铁律）
+ *
+ * `null` = 上游没给这个口径（实测：第三方 / 自定义路由条目就没有）；
+ * `0` = 上游明确说不消耗积分。前者显示 `—`，后者显示 `x0` 并标「免费」。
+ * 把 `null` 渲染成 `x0` 是**最危险的错值** —— 错在「省钱」这一侧，
+ * 用户会以为某模型免费而大量调用。
+ *
+ * ## 折扣与活动
+ *
+ * - `discountedCredits`（会员折后）只在**确实有折扣**时标出来，主数字仍是基础倍率；
+ * - `hasActivityDiscount` 只出一个「限时」标签，**不显示活动价** ——
+ *   活动是限时的，把活动价当常规倍率展示，活动一结束界面就在说谎。
+ */
+function CreditCell({ model }: { model: TraeClientModel }) {
   const t = useT();
+  const value = model.credits;
+
   return (
-    <span
-      className="font-mono text-xs text-muted-foreground/60"
-      title={t("trae.gateway.models.creditNotApplicable")}
-    >
-      —
-    </span>
+    <div className="flex flex-wrap items-center gap-1.5">
+      {value === null ? (
+        <span className="font-mono text-xs text-muted-foreground/60" title={t("trae.gateway.models.creditNone")}>
+          —
+        </span>
+      ) : (
+        <span
+          data-credits={value}
+          title={t("trae.gateway.models.creditTitle", { value: formatRate(value) })}
+          className={cn(
+            "rounded border px-1.5 py-0.5 font-mono text-xs leading-4 tabular-nums",
+            CREDIT_TIER_CLASS[creditTier(value)],
+          )}
+        >
+          x{formatRate(value)}
+        </span>
+      )}
+      {value === 0 && (
+        <Badge variant="success" className="rounded-md px-1.5 py-0 text-[10px]">
+          {t("trae.gateway.models.creditFree")}
+        </Badge>
+      )}
+      {model.discountedCredits !== null && model.discountedCredits !== value && (
+        <span
+          title={t("trae.gateway.models.creditDiscountedTip", {
+            value: formatRate(model.discountedCredits),
+          })}
+          className="rounded border border-border bg-muted/50 px-1.5 py-0 text-[10px] leading-4 text-muted-foreground"
+        >
+          {t("trae.gateway.models.creditDiscounted", { value: formatRate(model.discountedCredits) })}
+        </span>
+      )}
+      {model.hasActivityDiscount && (
+        <Badge variant="warning" className="rounded-md px-1.5 py-0 text-[10px]">
+          {t("trae.gateway.models.creditActivity")}
+        </Badge>
+      )}
+    </div>
   );
 }
+
+/**
+ * 倍率 → 显示串。
+ *
+ * 上游给的是 JSON 数字（`0.78` / `1.83` / `0.2`），直接 `String()` 会把
+ * `0.2` 显示成 `0.2`、`1.5` 显示成 `1.5`，没问题；但浮点运算后的值可能带
+ * 长尾（`0.30000000000000004`），故统一收成最多 2 位小数并去掉末尾 0
+ * —— 上游实测倍率最多 2 位小数，收成 2 位不丢有效信息。
+ */
+function formatRate(value: number): string {
+  return String(Number(value.toFixed(2)));
+}
+
 
 /** 单个档位的徽章。默认档那档额外高亮 —— 与 WorkBuddy 侧同款。 */
 function EffortBadge({ effort, isDefault }: { effort: string; isDefault: boolean }) {
