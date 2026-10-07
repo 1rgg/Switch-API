@@ -28,6 +28,7 @@
 > | --- | --- |
 > | **Model ID shown in the model list** | Displays the `id` you must use when calling the API (e.g. `DeepSeek-V4-Pro` → `deepseek-v4-pro`) as small monospace text after the display name; omitted when identical |
 > | **Credit multiplier shown in the model list** | Renders upstream's `credits` value (`x0.79`, `x0.11 credits`, …) as a colour-coded badge — green for free/cheap, amber for mid, red for expensive; shows `—` when upstream provides none |
+> | **Model list rebuilt as a capability table** | Both the WorkBuddy and TraeWork lists became a six-column table: model / credit multiplier / default tier / supported reasoning tiers / context length / max output. Reasoning tiers come from the gateway's static capability table, resolved **per region**; a default the upstream never declared is marked "inferred" rather than passed off as a declaration |
 > | **Update source points here** | The client's "check for updates" targets this repository's Releases and uses this repository's own signing key |
 > | **Windows CI build** | Adds `.github/workflows/build-windows.yml`, which builds and publishes a Windows installer automatically on every push to `main` |
 >
