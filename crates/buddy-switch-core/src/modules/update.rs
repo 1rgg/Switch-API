@@ -19,8 +19,22 @@ use crate::modules::config::{
 
 /// 应用当前版本（来自 Cargo.toml package.version）。
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const GITHUB_OWNER: &str = "NextAgentX";
-pub const GITHUB_REPO: &str = "trae-workbuddy-switch";
+/// 本分支（二次开发）的发布坐标。
+///
+/// ⚠️ 这里**必须**指向本分支自己的仓库，不能沿用上游 `NextAgentX/trae-workbuddy-switch`：
+///
+///   1. 本分支换了**自己的** updater 签名密钥（见 `tauri.conf.json > plugins.updater.pubkey`），
+///      上游 Release 里的包是用**上游私钥**签的，本分支客户端验签必然失败 —— 即使
+///      版本号更大也装不上。
+///   2. `tauri.conf.json` 的 endpoints 已经指向 `1rgg/Switch-API`；若这里仍是上游坐标，
+///      就会出现「检查到有新版（来自上游）→ 下载上游包 → 验签失败」的错配：
+///      每次自动更新都必然报错，用户还以为是自己的网络问题。
+///
+/// 用户仍可在设置页里覆盖 owner/repo（`load_github_config` 会原样采信），
+/// 这两个常量只决定**默认值**。改动此处的值不需要动 `tauri.conf.json`，
+/// 但两处的仓库名应当保持一致。
+pub const GITHUB_OWNER: &str = "1rgg";
+pub const GITHUB_REPO: &str = "Switch-API";
 
 /// 成功结果缓存有效期（6 小时）。自动轮询（30 分钟）命中缓存，不发网络请求；
 /// 设置页手动检查传 force=true 绕过缓存强制刷新。

@@ -120,6 +120,42 @@ function dereZero(v) {
 
 const semver = dereZero(version);
 
+/**
+ * `src-tauri/tauri.conf.json` 里**能不能**写原字符串（带前导零的 `2026.10.07`）？
+ *
+ * 答案取决于 Tauri CLI 版本：新版本对 `tauri.conf.json > version` **也强制严格
+ * semver**，写 `2026.10.07` 会在**编译前**直接失败：
+ *
+ *     failed to parse config: `tauri.conf.json > version` must be a semver string
+ *
+ * 注意这个错**发生在 `npm run build` 之后、cargo 之前**（Tauri 先解析配置），
+ * 所以前端门禁全绿也发现不了它 —— 本仓库真踩过：steps 1–8 全 success，
+ * step 9 `tauri build` 一秒即挂（见 CI run 37589780738）。
+ *
+ * 但把版本号统一下调成 `2026.10.7` 又会丢掉用户明确指定的 `2026.10.07`
+ * （安装包名、Release tag、更新清单都靠这个字符串）。
+ *
+ * 因此这里探测 CLI 行为，再决定 tauri.conf 收哪种形态：探测失败时**保守取去零形态**
+ * —— 打包失败比版本字符串样式更严重，而且 tauri CLI 的版本号会随 `npm ci` 漂移，
+ * 写死一个假设迟早会随依赖升级而失真。
+ */
+function tauriAcceptsLeadingZero() {
+  const cli = path.join(ROOT, 'node_modules', '@tauri-apps', 'cli');
+  if (!fs.existsSync(cli)) return false; // 未装依赖（如 CI 的 --check 前置步骤）→ 保守
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(cli, 'package.json'), 'utf8'),
+    );
+    // 粗粒度判定：2.x 起收紧为严格 semver。取不到版本号时同样保守。
+    const major = Number(String(pkg.version || '').split('.')[0]);
+    return !(Number.isFinite(major) && major >= 2);
+  } catch {
+    return false;
+  }
+}
+
+const tauriNeedsStrictSemver = !tauriAcceptsLeadingZero();
+
 if (printOnly) {
   console.log(version);
   process.exit(0);
@@ -156,11 +192,16 @@ function valueFor(flavor) {
   return flavor === 'semver' ? semver : version;
 }
 
-/** 顶层 `version` 字段（package.json / tauri.conf.json / 各 npm 包）。 */
-function addJsonTarget(rel) {
+/**
+ * 顶层 `version` 字段（package.json / tauri.conf.json / 各 npm 包）。
+ *
+ * `flavor` 可被覆盖：`tauri.conf.json` 在 Tauri CLI ≥2 下同 Cargo 一样收严格 semver
+ * （见 `tauriNeedsStrictSemver` 的注释）。
+ */
+function addJsonTarget(rel, flavor = 'display') {
   targets.push({
     rel,
-    flavor: 'display',
+    flavor,
     read() {
       const j = readJson(rel);
       if (!j || j.version === undefined) return [];
@@ -176,6 +217,17 @@ function addJsonTarget(rel) {
       return true;
     },
   });
+}
+
+/**
+ * 更新 Tauri overlay 里的版本号。
+ *
+ * `tauri.conf.json` 在**所有** Tauri CLI 版本上都收严格 semver，因此本载体固定
+ * 用 `semver` 形态；此函数只是为了把「为什么这里不能用 display 形态」写在被调用处，
+ * 免得以后有人"顺手统一"成 `addJsonTarget(rel)` 又把 CI 打挂。
+ */
+function addTauriConfTarget(rel) {
+  addJsonTarget(rel, tauriNeedsStrictSemver ? 'semver' : 'display');
 }
 
 /**
@@ -275,7 +327,7 @@ function addCargoTarget(rel) {
 
 // 载体清单（**新增载体只改这一段**）
 addJsonTarget('package.json');
-addJsonTarget('src-tauri/tauri.conf.json');
+addTauriConfTarget('src-tauri/tauri.conf.json');
 addJsonTarget('npm/package.json');
 addOptionalDepsTarget('npm/package.json');
 addLockTarget('package-lock.json');

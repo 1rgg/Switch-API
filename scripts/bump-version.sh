@@ -18,16 +18,20 @@ const path = require('path');
 const version = process.argv[2];
 
 /**
- * Cargo 用的版本号：与用户输入的 `version` **可能不同**。
+ * Cargo **和 Tauri CLI ≥2** 用的版本号：与用户输入的 `version` **可能不同**。
  *
- * Cargo 走严格 semver，**禁止**数字段带前导零：
- *     version = "2026.10.07"   →  error: invalid leading zero in patch version number
- * 而日期形态的版本（如用户指定的 `2026.10.07`）天然带前导零，
- * 于是「JSON 侧合法、Cargo 侧直接构建失败」—— 失败点在 CI 的
- * `cargo metadata`，本地无 Rust 工具链时**完全看不出来**。
+ * 两家都走严格 semver，**禁止**数字段带前导零：
+ *     Cargo: version = "2026.10.07"  →  error: invalid leading zero in patch version number
+ *     Tauri: tauri.conf.json > version = "2026.10.07"
+ *            →  failed to parse config: `tauri.conf.json > version` must be a semver string
+ * 而日期形态的版本（如用户指定的 `2026.10.07`）天然带前导零，于是
+ * 「JSON 侧合法、构建侧直接失败」——失败点在 CI（`cargo metadata` / `tauri build`
+ * 解析配置），本地无 Rust 工具链时**完全看不出来**。本仓库两处都真踩过。
  *
- * 处理：JSON / tauri.conf 保留原样（那是安装包名、Release tag、更新清单
- * 的取值来源，必须是用户要的那个字符串）；Cargo 侧去掉前导零。
+ * 处理：`package.json` / npm 包保留原样（那是安装包名、Release tag、更新清单
+ * 的取值来源，必须是用户要的那个字符串）；**Cargo 与 tauri.conf** 去掉前导零。
+ * 因此安装包文件名是 `BuddySwitch_2026.10.7_x64-setup.exe`，而 Release tag 与
+ * 更新清单里仍是 `2026.10.07` —— 这是有意的，也是唯一能让三家都接受的办法。
  *
  * 两者不等会不会让自动更新误判？不会：`update::compare_versions` 按
  * `split('.').parse::<i64>()` 比较，`07` 与 `7` 都解析成 `7`，
@@ -43,7 +47,7 @@ if (semver !== version) {
 }
 
 /** 只替换 JSON 顶层 version 字段，避免误伤 dependencies 里的同名键。 */
-function bumpJsonVersion(file) {
+function bumpJsonVersion(file, value = version) {
   if (!fs.existsSync(file)) {
     console.warn(`跳过（不存在）: ${file}`);
     return;
@@ -54,9 +58,9 @@ function bumpJsonVersion(file) {
     console.warn(`跳过（无 version 字段）: ${file}`);
     return;
   }
-  json.version = version;
+  json.version = value;
   fs.writeFileSync(file, JSON.stringify(json, null, 2) + '\n');
-  console.log(`已更新: ${file}`);
+  console.log(`已更新: ${file}${value === version ? '' : `  → ${value}`}`);
 }
 
 /** 只替换 Cargo.toml 中 [package] 段下的 version（首个 ^version = "..." 行）。 */
@@ -68,7 +72,9 @@ function bumpCargoVersion(file) {
   const raw = fs.readFileSync(file, 'utf8');
   const next = raw.replace(/^version = "[^"]+"/m, `version = "${semver}"`);
   if (next === raw) {
-    console.warn(`跳过（未匹配 version 行）: ${file}`);
+    // 不是「没匹配到」，而是**已经等于目标值**（幂等重跑）——
+    // 早先这里报「未匹配 version 行」，把正确的幂等行为说成了异常，容易误导排查。
+    console.log(`无变化: ${file}  （已是 ${semver}）`);
     return;
   }
   fs.writeFileSync(file, next);
@@ -77,10 +83,16 @@ function bumpCargoVersion(file) {
 
 const jsonTargets = [
   'package.json',
-  'src-tauri/tauri.conf.json',
   'npm/package.json',
 ];
 for (const file of jsonTargets) bumpJsonVersion(file);
+
+// ⚠️ tauri.conf.json 必须**单独**走去零形态：Tauri CLI ≥2 对
+// `tauri.conf.json > version` 同样强制严格 semver，写 `2026.10.07` 会在
+// `tauri build` 解析配置时直接失败（`must be a semver string`），
+// 而不是等到 cargo 编译 —— 本仓库真踩过（CI run 37589780738）。
+// 忘了这一条，整个打包流程会在最后一步挂掉。
+bumpJsonVersion('src-tauri/tauri.conf.json', semver);
 
 // 平台包的 version 与主包 optionalDependencies 的引用必须同步，
 // 否则 npm 安装时会去拉一个不存在的版本。
@@ -130,8 +142,8 @@ if (fs.existsSync('Cargo.lock')) {
 }
 
 console.log(
-  `版本已同步：JSON / tauri.conf = ${version}` +
-    (semver === version ? '' : `，Cargo = ${semver}`) +
-    `（含 npm 主包与平台包、optionalDependencies、4 个 crate 与 Cargo.lock）`,
+  `版本已同步：package.json / npm 包 = ${version}` +
+    (semver === version ? '' : `，Cargo / tauri.conf = ${semver}`) +
+    `（含 npm 主包与平台包、optionalDependencies、4 个 crate、Cargo.lock 与 tauri.conf.json）`,
 );
 EOF
