@@ -326,6 +326,39 @@ src/                     # 前端：components / pages / lib（api.ts 双通道�
 npm/                     # npm 包（**尚未发布**）：主包 @nextagentx/buddy-switch + 5 个平台分包
 ```
 
+## 发布与自动更新（本仓库特有）
+
+本仓库用一份独立的工作流 `[.github/workflows/build-windows.yml](.github/workflows/build-windows.yml)`
+构建 Windows 安装包、签名并发布 Release。**不要**改上游的 `build.yml` / `pages.yml`
+（保持原样，方便以后同步上游）。
+
+### 发一个新版本
+
+1. 改 `package.json` 的 `version`（**必须同时改** `src-tauri/tauri.conf.json` 的 `version`）
+2. 提交并推送 `main` —— 工作流会自动构建、签名、创建 Release（tag 为 `v<版本号>`）
+3. 已安装旧版的用户在客户端左下角点「检查更新」即可升级
+
+### 签名密钥（客户端自动更新的前提）
+
+`tauri.conf.json` 里 `createUpdaterArtifacts: true` 让签名私钥成为**打包硬依赖**。
+本仓库需要在 `Settings → Secrets and variables → Actions` 配置：
+
+| Secret | 内容 |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | 私钥**文件内容**（不是路径） |
+
+私钥用 `npx tauri signer generate -w <路径>` 生成；本仓库当前密钥**无密码**，
+因此不需要 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
+
+公钥必须与私钥配对，已写死在 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`，
+同时 `plugins.updater.endpoints` 指向本仓库 Releases 的 `latest.json`。
+
+> ⚠️ **私钥一旦丢失，已安装的客户端将永远收不到自动更新**，只能手动卸载重装。
+> 请离线备份私钥。永远不要把私钥提交进仓库（`.gitignore` 已排除 `*.key` / `.updater-keys/`）。
+
+> ⚠️ **本分支与上游 `NextAgentX/trae-workbuddy-switch` 使用不同的签名密钥**，
+> 两者产物不可混装 —— 混装会导致更新签名校验失败。
+
 ## 参与贡献
 
 **欢迎一切形式的贡献，也欢迎 PR。** 提 Issue、补文档、修 Bug、加功能都算 —— 完整的贡献指引（能做什么、PR 自检清单、本仓库的几条代码约定）见 **[CONTRIBUTING.md](CONTRIBUTING.md)**（[English](CONTRIBUTING.en.md)）。

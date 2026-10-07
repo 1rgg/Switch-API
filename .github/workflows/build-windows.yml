@@ -40,10 +40,16 @@ name: build-windows
 #
 # ## 产物与发布
 #
-# 构建产出（bundle/nsis/）：
-#   - BuddySwitch_<version>_x64-setup.exe       安装包（给人下载）
-#   - BuddySwitch_<version>_x64-setup.nsis.zip  签名载体（tauri-updater 下载这个）
-#   - *.sig                                     以上压缩包的 minisign 签名
+# 构建产出（bundle/nsis/）——注意**更新包格式随 Tauri 版本变化**：
+#
+#   - 较新版本（本仓库当前）：对 .exe 本身签名，产出
+#       BuddySwitch_<version>_x64-setup.exe
+#       BuddySwitch_<version>_x64-setup.exe.sig     minisign 签名
+#     updater 下载的就是 .exe
+#   - 较老版本：产出 *.nsis.zip 作为签名载体
+#
+# 下方收集步骤两种都兼容（优先 zip，回退 exe），并把 latest.json 的 url
+# 指向实际用于更新的那个文件。
 #
 # 工作流会生成 `latest.json`（tauri-updater 的更新清单），然后：
 #   1. 始终上传到 Actions Artifacts（保留 30 天，方便随时取包）
@@ -146,6 +152,12 @@ jobs:
         run: npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis
 
       # 收集产物、生成 latest.json 更新清单
+      #
+      # ⚠️ 关于更新包的格式：不同 Tauri 版本产出不同。
+      #   - 较新版本（本仓库当前）：对 .exe 本身签名 → *.exe.sig，
+      #     updater 下载的就是 .exe，latest.json 的 url 指向 .exe
+      #   - 较老版本：产出 *.nsis.zip + *.nsis.zip.sig
+      # 这里两种都兼容，优先用 zip（若有），否则用 exe。
       - name: Collect artifacts & generate latest.json
         shell: bash
         run: |
@@ -169,27 +181,34 @@ jobs:
           [ -n "$SETUP" ] || { echo "::error::未找到 NSIS 安装包（*-setup.exe）"; exit 1; }
           cp "$SETUP" out/
 
-          # tauri-updater 实际下载的是 .nsis.zip，而不是 .exe
-          ZIP=$(find "$ROOT" -maxdepth 1 -type f -name '*-setup.nsis.zip' | head -1)
-          [ -n "$ZIP" ] || { echo "::error::未找到签名包（*-setup.nsis.zip），签名是否失败？"; exit 1; }
-          SIG=$(find "$ROOT" -maxdepth 1 -type f -name '*-setup.nsis.zip.sig' | head -1)
-          [ -n "$SIG" ] || { echo "::error::未找到签名文件（*.sig）"; exit 1; }
-          cp "$ZIP" out/
-          cp "$SIG" out/
+          # 判定「更新包」与「签名的对象」：优先 zip，回退 exe
+          ZIP=$(find "$ROOT" -maxdepth 1 -type f -name '*-setup.nsis.zip' | head -1 || true)
+          if [ -n "$ZIP" ]; then
+            SIG=$(find "$ROOT" -maxdepth 1 -type f -name '*-setup.nsis.zip.sig' | head -1 || true)
+            [ -n "$SIG" ] || { echo "::error::找到 zip 但缺少 .nsis.zip.sig"; exit 1; }
+            cp "$ZIP" out/; cp "$SIG" out/
+            UPDATE_NAME=$(basename "$ZIP")
+            SIG_FILE="$SIG"
+          else
+            SIG="$SETUP.sig"
+            [ -f "$SIG" ] || { echo "::error::未找到签名文件（*-setup.exe.sig），签名是否失败？"; exit 1; }
+            cp "$SIG" out/
+            UPDATE_NAME=$(basename "$SETUP")
+            SIG_FILE="$SIG"
+          fi
+          echo "更新包: $UPDATE_NAME"
+          echo "签名  : $(basename "$SIG_FILE")"
 
           # 裸 exe（未打进安装包的桌面主程序），便于免安装试跑
           APP_EXE="target/x86_64-pc-windows-msvc/release/BuddySwitch.exe"
           [ -f "$APP_EXE" ] && cp "$APP_EXE" out/ || true
 
           # ---- latest.json：tauri-updater 的更新清单 ----
-          # URL 指向本仓库该 tag 的 Release 资产（用 tag 名而非 latest，
-          # 避免 latest 重定向带来的解析差异；客户端拿到后可正常下载）
-          ZIP_NAME=$(basename "$ZIP")
-          SIG_CONTENT=$(cat "$SIG")
+          SIG_CONTENT=$(cat "$SIG_FILE")
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           node -e '
             const fs = require("fs");
-            const [ver, repo, zipName, sig, pubDate, notes] = process.argv.slice(1);
+            const [ver, repo, name, sig, pubDate, notes] = process.argv.slice(1);
             const manifest = {
               version: ver,
               notes: notes,
@@ -197,13 +216,13 @@ jobs:
               platforms: {
                 "windows-x86_64": {
                   signature: sig,
-                  url: `https://github.com/${repo}/releases/download/${ver}/${zipName}`,
+                  url: `https://github.com/${repo}/releases/download/${ver}/${name}`,
                 },
               },
             };
             fs.writeFileSync("out/latest.json", JSON.stringify(manifest, null, 2) + "\n");
             console.log(JSON.stringify(manifest, null, 2));
-          ' "$VER" "${{ github.repository }}" "$ZIP_NAME" "$SIG_CONTENT" "$PUB_DATE" \
+          ' "$VER" "${{ github.repository }}" "$UPDATE_NAME" "$SIG_CONTENT" "$PUB_DATE" \
             "Buddy Switch $VER（二次开发分支 1rgg/Switch-API）"
 
           echo "--- out/ ---"
@@ -239,7 +258,7 @@ jobs:
           ## 下载
 
           - \`BuddySwitch_${{ env.VER }}_x64-setup.exe\` —— Windows x64 安装包，双击安装
-          - \`latest.json\` / \`*.nsis.zip\` / \`*.sig\` —— 客户端自动更新所需，普通用户不用管
+          - \`*.sig\` / \`latest.json\` —— 客户端自动更新所需，普通用户不用管
 
           ## 自动更新
 
