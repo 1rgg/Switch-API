@@ -177,12 +177,25 @@ jobs:
           find "$ROOT" -maxdepth 1 -type f 2>/dev/null | sort || true
 
           mkdir -p out
-          SETUP=$(find "$ROOT" -maxdepth 1 -type f -name '*-setup.exe' | head -1)
-          [ -n "$SETUP" ] || { echo "::error::未找到 NSIS 安装包（*-setup.exe）"; exit 1; }
+          # ⚠️ 安装包必须按**当前版本号**精确匹配，不能靠 `find | head -1` 取「第一个」。
+          #
+          # 原因（实测踩到，2026-10-08）：`target/` 会被 cargo 缓存并在下一次运行恢复，
+          # 于是 `bundle/nsis/` 里**同时残留着历史构建的安装包**。`find` 的输出顺序
+          # 不可依赖，字符串序下 `BuddySwitch_2026.10.7_…`（旧版 v2026.10.07，
+          # 其 patch 前导零被 semver 规范化去掉）排在 `BuddySwitch_2026.10.80923_…` 之前，
+          # 结果**新版本的 Release 上传了旧构建的安装包** —— 且签名与 latest.json 都对得上，
+          # 客户端会「更新」到一个旧版本，属最难发现的一类发布事故。
+          SETUP=$(find "$ROOT" -maxdepth 1 -type f -name "*_${VER}_x64-setup.exe" | head -1)
+          [ -n "$SETUP" ] || {
+            echo "::error::未找到版本 ${VER} 的 NSIS 安装包（*_${VER}_x64-setup.exe）"
+            echo "::error::bundle 目录实际内容："
+            find "$ROOT" -maxdepth 1 -type f 2>/dev/null | sort || true
+            exit 1
+          }
           cp "$SETUP" out/
 
-          # 判定「更新包」与「签名的对象」：优先 zip，回退 exe
-          ZIP=$(find "$ROOT" -maxdepth 1 -type f -name '*-setup.nsis.zip' | head -1 || true)
+          # 判定「更新包」与「签名的对象」：优先 zip，回退 exe（同样按版本号钉死）
+          ZIP=$(find "$ROOT" -maxdepth 1 -type f -name "*_${VER}_*.nsis.zip" | head -1 || true)
           if [ -n "$ZIP" ]; then
             SIG=$(find "$ROOT" -maxdepth 1 -type f -name '*-setup.nsis.zip.sig' | head -1 || true)
             [ -n "$SIG" ] || { echo "::error::找到 zip 但缺少 .nsis.zip.sig"; exit 1; }
