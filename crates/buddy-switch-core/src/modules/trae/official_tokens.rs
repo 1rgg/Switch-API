@@ -234,8 +234,9 @@ impl TurnUsage {
                 cache_read: number(extra, "cache_read_token").unwrap_or(0.0),
                 cache_write: number(extra, "cache_write_token").unwrap_or(0.0),
             },
-            credits: number(group, "credits_float").or_else(|| number(group, "amount_float")),
-            money: number(group, "cost_money_float"),
+            credits: number(Some(group), "credits_float")
+                .or_else(|| number(Some(group), "amount_float")),
+            money: number(Some(group), "cost_money_float"),
             preview: text(group, "user_input_preview"),
             at_ms: None,
         }
