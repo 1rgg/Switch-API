@@ -157,6 +157,16 @@ export const en = {
   "shared.demo.trae.pkgGroup.free": "Free",
   "shared.demo.trae.officialUsage.errorExpired": "JWT expired — sign in again to query",
   "shared.demo.trae.officialUsage.note": "Scope: cumulative consumption on the upstream account ledger (including calls that bypass the local gateway); no per-day or per-request breakdown.",
+  // ---- Trae: official token demo data (`get_trae_official_tokens`) ----
+  "shared.demo.trae.tokens.preview.news": "Scheduled task: gather today's IT-industry headlines into a briefing",
+  "shared.demo.trae.tokens.preview.weather": "Fetch today's hourly forecast for Zhangmutou, Dongguan",
+  "shared.demo.trae.tokens.preview.stock": "Track today's moves for the holdings and summarise them",
+  "shared.demo.trae.tokens.preview.docs": "Condense this technical document into a one-page summary",
+  "shared.demo.trae.session.news": "Today's AI industry headlines",
+  "shared.demo.trae.session.weather": "Hourly forecast for Zhangmutou, Dongguan",
+  "shared.demo.trae.session.stock": "Stock trends",
+  "shared.demo.trae.session.docs": "Technical document summary",
+  "shared.demo.trae.tokens.note": "Scope: per-turn usage from Trae's official agent domain (including chats inside the IDE that bypass the local gateway); dates are bucketed locally by message time, not an upstream daily metric.",
   // ---- Trae: unsupported capabilities (greyed-out cards) ----
   "shared.demo.cap.travel": "Auto travel",
   "shared.demo.cap.travelReason": "The Trae client has no API for that activity, and this tool has no matching backend implementation.",

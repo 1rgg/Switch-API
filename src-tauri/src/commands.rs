@@ -1403,6 +1403,37 @@ pub async fn get_trae_official_usage(
     trae::handlers::official_usage_overview_for(variant, &user_ids).await
 }
 
+/// **官方 Token** 用量（含 IDE 内直接对话，不经过本机网关）。
+///
+/// `userIds` 为要查询的账号；`None` / 空 → 该变体全部账号。
+/// `days` / `maxSessions` / `maxTurns` 控制扫描窗口与上限（缺省 7 天 / 20 会话 / 200 轮）。
+/// 需要多轮上游请求（项目 → 会话 → 消息 → 逐轮用量），故为 `async`。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_trae_official_tokens(
+    variant: Option<String>,
+    user_ids: Option<Vec<String>>,
+    days: Option<i64>,
+    max_sessions: Option<u32>,
+    max_turns: Option<u32>,
+) -> Value {
+    let variant = parse_trae_variant(variant.as_deref());
+    let user_ids: Vec<String> = match user_ids {
+        Some(ids) if !ids.is_empty() => ids,
+        _ => trae::account::entries_for(variant)
+            .into_iter()
+            .map(|(uid, _account)| uid)
+            .collect(),
+    };
+    trae::handlers::official_tokens_overview_for(
+        variant,
+        &user_ids,
+        days,
+        max_sessions.map(|value| value as usize),
+        max_turns.map(|value| value as usize),
+    )
+    .await
+}
+
 /// GET /api/trae/logs —— 运行日志（系统日志页的「运行日志」标签页）。
 ///
 /// `kind` 取 `app` / `checkin` / `switch`（缺省或 `all` 表示不限）；

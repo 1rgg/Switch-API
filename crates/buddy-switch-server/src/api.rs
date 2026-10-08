@@ -197,6 +197,7 @@ fn api_routes() -> Router {
         .route("/api/trae/credits", get(api_trae_credits))
         .route("/api/trae/token-stats", get(api_trae_token_statistics))
         .route("/api/trae/official-usage", post(api_trae_official_usage))
+        .route("/api/trae/official-tokens", post(api_trae_official_tokens))
         .route("/api/trae/logs", get(api_trae_logs))
         .route("/api/trae/credits/refresh", post(api_trae_refresh_credits))
         .route("/api/trae/refresh-jwt", post(api_trae_refresh_jwt))
@@ -1394,6 +1395,48 @@ async fn api_trae_official_usage(Json(body): Json<Value>) -> Response {
             .collect(),
     };
     json_ok(trae::handlers::official_usage_overview_for(variant, &user_ids).await)
+}
+
+/// POST /api/trae/official-tokens —— **官方 Token** 用量（含 IDE 内直接对话）。
+///
+/// body：`{ "variant": "cn"|"global", "userIds": ["…"],
+///          "days": 7, "maxSessions": 20, "maxTurns": 200 }`。
+///
+/// 与 `/api/trae/official-usage`（积分）是**两套口径**：积分来自账号账本，
+/// token 来自 agent 域的会话 API。本接口需要多轮上游请求，故按窗口与上限截断；
+/// `userIds` 缺省取该变体全部账号。
+async fn api_trae_official_tokens(Json(body): Json<Value>) -> Response {
+    let variant = parse_trae_variant(body.get("variant").and_then(Value::as_str));
+    let user_ids: Vec<String> = match body.get("userIds").and_then(Value::as_array) {
+        Some(items) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        None => trae::account::entries_for(variant)
+            .into_iter()
+            .map(|(uid, _account)| uid)
+            .collect(),
+    };
+    let days = body.get("days").and_then(Value::as_i64);
+    let max_sessions = body
+        .get("maxSessions")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    let max_turns = body
+        .get("maxTurns")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    json_ok(
+        trae::handlers::official_tokens_overview_for(
+            variant,
+            &user_ids,
+            days,
+            max_sessions,
+            max_turns,
+        )
+        .await,
+    )
 }
 
 /// GET /api/trae/logs —— 运行日志（`kind` / `date` / `keyword` / `limit` / `variant` 均可选）。

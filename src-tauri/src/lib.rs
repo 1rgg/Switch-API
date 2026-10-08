@@ -323,6 +323,7 @@ pub fn run() {
             commands::get_trae_credits,
             commands::get_trae_token_statistics,
             commands::get_trae_official_usage,
+            commands::get_trae_official_tokens,
             commands::get_trae_logs,
             commands::get_trae_profiles,
             commands::get_trae_settings,

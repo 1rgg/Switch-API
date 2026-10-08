@@ -175,6 +175,16 @@ export const zh = {
   "shared.demo.trae.pkgGroup.free": "免费",
   "shared.demo.trae.officialUsage.errorExpired": "JWT 已过期，请重新登录后再查",
   "shared.demo.trae.officialUsage.note": "口径：上游账号账本的累计消耗（含不经过本机网关的调用），无逐日/逐请求明细。",
+  // ---- Trae：官方 Token 演示数据（`get_trae_official_tokens`） ----
+  "shared.demo.trae.tokens.preview.news": "定时任务：获取当天 IT 行业重要资讯并整理成简报",
+  "shared.demo.trae.tokens.preview.weather": "获取东莞樟木头当天的逐小时天气预报",
+  "shared.demo.trae.tokens.preview.stock": "跟踪持仓标的的当日走势并给出小结",
+  "shared.demo.trae.tokens.preview.docs": "把这份技术文档整理成一页要点摘要",
+  "shared.demo.trae.session.news": "今日 AI 行业热点新闻",
+  "shared.demo.trae.session.weather": "东莞樟木头逐小时天气预报",
+  "shared.demo.trae.session.stock": "股票走势",
+  "shared.demo.trae.session.docs": "技术文档要点整理",
+  "shared.demo.trae.tokens.note": "口径：Trae 官方 agent 域逐轮用量（含 IDE 内直接对话，不经过本机网关）；按会话消息时间归档，非上游逐日口径。",
   // ---- Trae：平台做不到的维度（置灰卡） ----
   "shared.demo.cap.travel": "自动旅行",
   "shared.demo.cap.travelReason": "Trae 客户端没有该活动接口，本工具也无对应后端实现。",

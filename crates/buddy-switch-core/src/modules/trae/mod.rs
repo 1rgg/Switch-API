@@ -107,6 +107,10 @@ pub mod oauth_result_page;
 /// Trae **官方**积分用量投影：打通 `ide_user_ent_usage` 的 `usage_summary`，
 /// 使「不经过本机网关的调用消耗」也可查（见模块头，含实测事实与口径边界）。
 pub mod official_usage;
+/// Trae **官方 Token 用量**：经 agent 域的会话 API（项目 → 会话 → 消息）枚举出
+/// 每一轮的 `userMessageId`，再查 `get_session_usage` 拿到该轮的
+/// input/output/cache token，使「IDE 里直接对话的 token」也可统计（见模块头）。
+pub mod official_tokens;
 pub mod paths;
 pub mod platform;
 pub mod profile;

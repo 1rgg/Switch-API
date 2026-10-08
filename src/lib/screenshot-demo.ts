@@ -17,6 +17,8 @@ import type {
   TraeEnvStatus,
   TraeOfficialUsageAccount,
   TraeOfficialUsageOverview,
+  TraeOfficialTurn,
+  TraeOfficialTokensOverview,
   TraeVariantsStatus,
   TraeGatewayConfigRaw,
   TraeGatewayLogEntry,
@@ -1145,6 +1147,87 @@ function demoTraeOfficialUsage(): TraeOfficialUsageOverview {
 }
 
 /**
+ * 演示用的**官方 Token 用量**总览（`get_trae_official_tokens`）。
+ *
+ * 与 `demoTraeOfficialUsage`（积分）刻意分开：这里的数字是 **token**，量级远大于积分，
+ * 且按模型/会话/日期三个维度组织 —— 截图必须能一眼看出「两块口径不同」。
+ */
+function demoTraeOfficialTokens(): TraeOfficialTokensOverview {
+  const now = Date.now();
+  const day = (offset: number) => localDate(offset);
+  const turns: TraeOfficialTurn[] = [
+    { messageId: "6ac6e87947543a79e275cd2c", sessionId: "6ac6e87947543a79e275cd2b", model: "DeepSeek-V4.1-Flash", inputTokens: 302612, outputTokens: 9525, cacheReadTokens: 258560, totalTokens: 312137, credits: 9.08, at: now - 3_600_000, preview: t("shared.demo.trae.tokens.preview.news") },
+    { messageId: "6ac5ab9f9aa47af540791b7b", sessionId: "6ac5ab9f9aa47af540791b7a", model: "GLM-5.2", inputTokens: 200672, outputTokens: 8427, cacheReadTokens: 166336, totalTokens: 209099, credits: 11.81, at: now - 7_200_000, preview: t("shared.demo.trae.tokens.preview.weather") },
+    { messageId: "6ac4430d230ce7980fc9a559", sessionId: "6ac4430d230ce7980fc9a558", model: "DeepSeek-V4-Flash 正式版", inputTokens: 338715, outputTokens: 11067, cacheReadTokens: 293888, totalTokens: 349782, credits: 9.91, at: now - 86_400_000, preview: t("shared.demo.trae.tokens.preview.stock") },
+    { messageId: "6abb04a384734ab0135ed84d", sessionId: "6abb04a384734ab0135ed84c", model: "DeepSeek-V4-Flash 正式版", inputTokens: 488634, outputTokens: 14602, cacheReadTokens: 437760, totalTokens: 503236, credits: 11.18, at: now - 2 * 86_400_000, preview: t("shared.demo.trae.tokens.preview.news") },
+    { messageId: "6ac5903b230ce7980fc9a5e8", sessionId: "6ac5903b230ce7980fc9a5e7", model: "DeepSeek-V4-Flash 正式版", inputTokens: 361737, outputTokens: 9496, cacheReadTokens: 316160, totalTokens: 371233, credits: 9.75, at: now - 3 * 86_400_000, preview: t("shared.demo.trae.tokens.preview.docs") },
+  ];
+  const sum = (pick: (turn: TraeOfficialTurn) => number) =>
+    turns.reduce((total, turn) => total + pick(turn), 0);
+
+  const modelSeeds: { model: string; turns: number; input: number; output: number; credits: number }[] = [
+    { model: "DeepSeek-V4-Flash 正式版", turns: 3, input: 1189086, output: 35165, credits: 30.84 },
+    { model: "DeepSeek-V4.1-Flash", turns: 1, input: 302612, output: 9525, credits: 9.08 },
+    { model: "GLM-5.2", turns: 1, input: 200672, output: 8427, credits: 11.81 },
+  ];
+
+  return {
+    accounts: [
+      {
+        userId: "7481920",
+        accountName: t("shared.demo.trae.name.main"),
+        totals: {
+          inputTokens: sum((turn) => turn.inputTokens),
+          outputTokens: sum((turn) => turn.outputTokens),
+          cacheReadTokens: sum((turn) => turn.cacheReadTokens),
+          cacheWriteTokens: 0,
+          totalTokens: sum((turn) => turn.totalTokens),
+          credits: Math.round(sum((turn) => turn.credits ?? 0) * 100) / 100,
+          turns: turns.length,
+        },
+        models: modelSeeds.map((seed) => ({
+          model: seed.model,
+          turns: seed.turns,
+          inputTokens: seed.input,
+          outputTokens: seed.output,
+          totalTokens: seed.input + seed.output,
+          credits: seed.credits,
+        })),
+        sessions: [
+          { sessionId: "6ac6e87947543a79e275cd2b", title: t("shared.demo.trae.session.news"), turns: 2, totalTokens: 521236, credits: 20.89, lastAt: now - 3_600_000 },
+          { sessionId: "6ac5ab9f9aa47af540791b7a", title: t("shared.demo.trae.session.weather"), turns: 1, totalTokens: 209099, credits: 11.81, lastAt: now - 7_200_000 },
+          { sessionId: "6ac4430d230ce7980fc9a558", title: t("shared.demo.trae.session.stock"), turns: 1, totalTokens: 349782, credits: 9.91, lastAt: now - 86_400_000 },
+          { sessionId: "6ac5903b230ce7980fc9a5e7", title: t("shared.demo.trae.session.docs"), turns: 1, totalTokens: 371233, credits: 9.75, lastAt: now - 3 * 86_400_000 },
+        ],
+        daily: [
+          { date: day(3), inputTokens: 361737, outputTokens: 9496, totalTokens: 371233, credits: 9.75, turns: 1 },
+          { date: day(2), inputTokens: 488634, outputTokens: 14602, totalTokens: 503236, credits: 11.18, turns: 1 },
+          { date: day(1), inputTokens: 338715, outputTokens: 11067, totalTokens: 349782, credits: 9.91, turns: 1 },
+          { date: day(0), inputTokens: 503284, outputTokens: 17952, totalTokens: 521236, credits: 20.89, turns: 2 },
+        ],
+        recent: turns,
+        scan: { projects: 4, sessions: 25, turns: 5, requests: 35, truncated: false },
+        errors: [],
+      },
+    ],
+    aggregate: {
+      accountCount: 1,
+      turns: turns.length,
+      inputTokens: sum((turn) => turn.inputTokens),
+      outputTokens: sum((turn) => turn.outputTokens),
+      cacheReadTokens: sum((turn) => turn.cacheReadTokens),
+      cacheWriteTokens: 0,
+      totalTokens: sum((turn) => turn.totalTokens),
+      credits: Math.round(sum((turn) => turn.credits ?? 0) * 100) / 100,
+      requests: 35,
+    },
+    errors: [],
+    scan: { days: 7 },
+    note: t("shared.demo.trae.tokens.note"),
+  };
+}
+
+/**
  * 演示用的登录态快照总览（**按程序位分家**）。
  *
  * 快照是**客户端级**的（只能恢复到采集它的那个客户端），因此这里按**程序位**给数据：
@@ -1629,6 +1712,7 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
     case "get_trae_checkin_status": return demoTraeCheckinStatus();
     case "get_trae_credits": return demoTraeCredits();
     case "get_trae_official_usage": return demoTraeOfficialUsage();
+    case "get_trae_official_tokens": return demoTraeOfficialTokens();
     case "get_trae_profiles": return demoTraeProfiles(args);
     case "get_trae_settings": return demoTraeSettings();
     case "get_trae_token_statistics":

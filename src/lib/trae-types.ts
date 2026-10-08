@@ -538,6 +538,138 @@ export interface TraeOfficialUsageOverview {
   note: string;
 }
 
+// ---------------------------------------------------------------------------
+// 官方 Token 用量（`get_trae_official_tokens`）—— IDE 内对话也能统计
+// ---------------------------------------------------------------------------
+//
+// ## 与 {@link TraeTokenStatistics} 的根本差别
+//
+// `TraeTokenStatistics` 只统计**经过本机网关**的调用（数据源是网关请求日志），
+// 直接在 Trae IDE / SOLO 里对话产生的 token **完全看不到**。本类型是官方口径的补全：
+// 走 agent 域的会话 API（项目 → 会话 → 消息 → 逐轮用量），把 IDE 内的对话也算进来。
+//
+// ## 口径纪律
+//
+// - 粒度是「**每条用户消息（一轮）**」，一轮可能触发多次内部 LLM 调用，
+//   因此 `inputTokens` 是**该轮所有调用之和**（计费口径），不是单次 prompt 大小；
+// - 上游**没有时间维度**：`daily` 是按**会话消息创建时间**本地归档的，不是上游给的逐日数据；
+// - 扫描有上限（`scan.truncated`），不是全量历史 —— 界面必须如实说明扫了多少。
+//
+// 字段名与 Rust 侧 `official_tokens` 的序列化逐字一致（camelCase）。
+
+/** 一轮（一条用户消息）的 token 记录。 */
+export interface TraeOfficialTurn {
+  messageId: string;
+  sessionId: string | null;
+  /** 模型展示名（上游 `model_name`，如 `DeepSeek-V4-Flash 正式版`）；缺失为 `null`。 */
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  /** 输入 + 输出。 */
+  totalTokens: number;
+  /** 该轮消耗积分；上游没给为 `null`。 */
+  credits: number | null;
+  /** 消息创建时间（Unix 毫秒）；缺失为 `null`。 */
+  at: number | null;
+  /** 用户输入预览（上游给的前若干字）。 */
+  preview: string | null;
+}
+
+/** 账号级 token 合计。 */
+export interface TraeOfficialTokenTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** 输入 + 输出。 */
+  totalTokens: number;
+  /** 逐轮积分之和。 */
+  credits: number;
+  /** 统计到的轮次数。 */
+  turns: number;
+}
+
+/** 模型维度汇总。 */
+export interface TraeOfficialTokenModel {
+  model: string;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  credits: number;
+}
+
+/** 会话维度汇总。 */
+export interface TraeOfficialTokenSession {
+  sessionId: string;
+  title: string | null;
+  turns: number;
+  totalTokens: number;
+  credits: number;
+  /** 最近一轮时间（Unix 毫秒）；缺失为 `null`。 */
+  lastAt: number | null;
+}
+
+/** 按天汇总（**本地归档**：按会话消息创建时间分日）。 */
+export interface TraeOfficialTokenDaily {
+  date: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  credits: number;
+  turns: number;
+}
+
+/** 扫描统计（如实告诉用户「扫了多少、是否被截断」）。 */
+export interface TraeOfficialTokenScan {
+  projects: number;
+  sessions: number;
+  turns: number;
+  requests: number;
+  truncated: boolean;
+}
+
+/** 单个账号的官方 token 用量。 */
+export interface TraeOfficialTokensAccount {
+  userId: string;
+  accountName: string;
+  totals: TraeOfficialTokenTotals;
+  models: TraeOfficialTokenModel[];
+  sessions: TraeOfficialTokenSession[];
+  daily: TraeOfficialTokenDaily[];
+  /** 最近若干轮（最多 50 条）。 */
+  recent: TraeOfficialTurn[];
+  scan: TraeOfficialTokenScan;
+  errors: string[];
+}
+
+/** 多账号聚合。 */
+export interface TraeOfficialTokensAggregate {
+  /** 统计到**有轮次**的账号数（零轮次的账号不计入）。 */
+  accountCount: number;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  credits: number;
+  /** 本次扫描发出的上游请求数。 */
+  requests: number;
+}
+
+/** 官方 token 用量总览（`get_trae_official_tokens`）。 */
+export interface TraeOfficialTokensOverview {
+  accounts: TraeOfficialTokensAccount[];
+  aggregate: TraeOfficialTokensAggregate;
+  errors: TraeOfficialUsageError[];
+  /** 本次扫描的窗口（天）。 */
+  scan: { days: number };
+  /** 口径声明（后端下发，可直接上界面）。 */
+  note: string;
+}
+
 /** 登录态快照信息。 */
 export interface TraeProfileInfo {
   slot: string;

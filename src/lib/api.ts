@@ -70,6 +70,7 @@ import type {
   TraeLogQuery,
   TraeLogsResponse,
   TraeOfficialUsageOverview,
+  TraeOfficialTokensOverview,
   TraeOAuthPollResult,
   TraeOAuthStartResult,
   TraeProfilesOverview,
@@ -126,7 +127,7 @@ const DEMO_READ_COMMANDS = new Set([
   // 由 `DemoAction` 包裹后在演示模式下统一提示不可操作。
   "get_trae_env", "get_trae_variants", "get_trae_capabilities", "get_trae_accounts",
   "get_trae_checkin_status",
-  "get_trae_credits", "get_trae_official_usage", "get_trae_token_statistics", "get_trae_logs", "get_trae_profiles",
+  "get_trae_credits", "get_trae_official_usage", "get_trae_official_tokens", "get_trae_token_statistics", "get_trae_logs", "get_trae_profiles",
   "get_trae_settings", "get_trae_gateway_config", "trae_gateway_status",
   "get_trae_gateway_models", "get_trae_client_models", "list_trae_api_keys",
   "get_trae_gateway_logs",
@@ -238,6 +239,7 @@ const ROUTES: Record<string, Route> = {
   get_trae_credits: { method: "GET", path: "/api/trae/credits" },
   get_trae_token_statistics: { method: "GET", path: "/api/trae/token-stats" },
   get_trae_official_usage: { method: "POST", path: "/api/trae/official-usage" },
+  get_trae_official_tokens: { method: "POST", path: "/api/trae/official-tokens" },
   get_trae_logs: { method: "GET", path: "/api/trae/logs" },
   get_trae_profiles: { method: "GET", path: "/api/trae/profiles" },
   get_trae_settings: { method: "GET", path: "/api/trae/settings" },
@@ -1157,6 +1159,35 @@ export function getTraeOfficialUsage(
   return call("get_trae_official_usage", {
     variant: variant ?? null,
     userIds: userIds && userIds.length > 0 ? userIds : null,
+  });
+}
+
+/**
+ * Trae **官方 Token** 用量 —— 含**不经过本机网关**的 IDE 内对话。
+ *
+ * 数据源是 agent 域的会话 API（项目 → 会话 → 消息 → 逐轮用量）。与
+ * {@link getTraeTokenStatistics} 的根本差别：后者只统计**经过本机网关**的调用，
+ * 直接在 IDE 里对话产生的 token 此前完全不可见，本函数正是补上这一块。
+ *
+ * ⚠️ 需要多轮上游请求，因此按窗口与上限扫描（`days` / `maxSessions` / `maxTurns`），
+ * 返回的 `scan.truncated` 会如实告诉调用方是否被截断。上游**无逐日口径**，
+ * `daily` 是按会话消息创建时间本地归档的。
+ */
+export function getTraeOfficialTokens(
+  variant?: TraeVariantId | null,
+  options?: {
+    userIds?: string[] | null;
+    days?: number | null;
+    maxSessions?: number | null;
+    maxTurns?: number | null;
+  },
+): Promise<TraeOfficialTokensOverview> {
+  return call("get_trae_official_tokens", {
+    variant: variant ?? null,
+    userIds: options?.userIds && options.userIds.length > 0 ? options.userIds : null,
+    days: options?.days ?? null,
+    maxSessions: options?.maxSessions ?? null,
+    maxTurns: options?.maxTurns ?? null,
   });
 }
 

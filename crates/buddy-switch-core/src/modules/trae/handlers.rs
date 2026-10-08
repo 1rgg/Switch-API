@@ -275,6 +275,131 @@ pub fn aggregate_official_usage(accounts: Vec<Value>, errors: Vec<Value>) -> Val
     })
 }
 
+/// 指定变体的**官方 Token 用量**总览（含不经过本机网关的对话）。
+///
+/// ## 与 [`official_usage_overview_for`] / [`credits_overview_for`] 的分工
+///
+/// - `credits_overview_for`：**本地**口径（余额快照与签到明细）；
+/// - `official_usage_overview_for`：官方**积分**口径（账号账本累计消耗，无 token）；
+/// - 本函数：官方 **Token** 口径 —— 经 agent 域的会话 API 枚举每一轮，再查逐轮用量。
+///
+/// 三者口径互不重叠，界面上必须分开呈现（积分 ≠ token）。
+///
+/// ## 为什么需要这么绕
+///
+/// Trae 的 token **不在**账号域的积分接口里（实测 `ide_user_ent_usage` 的 69 个键
+/// 无任何 token 字段），只在 agent 域的会话 API 上。而那个接口要的是**消息 id**
+/// （字段名叫 `session_id` 但装的是 `userMessageId`），所以必须先枚举出消息 id。
+///
+/// ## 代价与边界
+///
+/// 需要多轮上游请求（项目 1 + 会话 1 + 每会话 1 + 每轮 1），因此**按窗口与上限截断**：
+/// 只看最近 `days` 天活跃的 `max_sessions` 个会话、最多 `max_turns` 轮。
+/// 单个会话/轮次失败不中断整体（进 `errors`）。
+pub async fn official_tokens_overview_for(
+    variant: TraeVariant,
+    user_ids: &[String],
+    days: Option<i64>,
+    max_sessions: Option<usize>,
+    max_turns: Option<usize>,
+) -> Value {
+    use crate::modules::trae::official_tokens;
+
+    let options = official_tokens::ScanOptions {
+        days: days.unwrap_or(official_tokens::DEFAULT_DAYS).clamp(1, 90),
+        max_sessions: max_sessions
+            .unwrap_or(official_tokens::DEFAULT_MAX_SESSIONS)
+            .clamp(1, 100),
+        max_turns: max_turns
+            .unwrap_or(official_tokens::DEFAULT_MAX_TURNS)
+            .clamp(1, 1000),
+    };
+
+    let mut accounts: Vec<Value> = Vec::new();
+    let mut errors: Vec<Value> = Vec::new();
+
+    for user_id in user_ids {
+        let Some(account) = account::find_for(variant, user_id) else {
+            errors.push(json!({ "userId": user_id, "error": "账号不存在" }));
+            continue;
+        };
+        let name = if account.name.trim().is_empty() {
+            user_id.clone()
+        } else {
+            account.name.clone()
+        };
+        match official_tokens::account_tokens(variant, user_id, &name, &account.jwt, options).await
+        {
+            Ok(tokens) => accounts.push(tokens.to_value()),
+            Err(error) => errors.push(json!({ "userId": user_id, "error": error })),
+        }
+    }
+
+    aggregate_official_tokens(accounts, errors, options.days)
+}
+
+/// 把逐账号的 token 投影合成顶层视图（**纯函数**——聚合算术可单测，不碰网络）。
+///
+/// 「有数」的账号才计入 `accountCount`：某账号可能只有错误、或被窗口过滤后为空。
+pub fn aggregate_official_tokens(accounts: Vec<Value>, errors: Vec<Value>, days: i64) -> Value {
+    let mut input = 0.0_f64;
+    let mut output = 0.0_f64;
+    let mut cache_read = 0.0_f64;
+    let mut cache_write = 0.0_f64;
+    let mut credits = 0.0_f64;
+    let mut turns = 0_u64;
+    let mut requests = 0_u64;
+    let mut with_data = 0_usize;
+
+    for account in &accounts {
+        let totals = account.get("totals");
+        let account_turns = totals
+            .and_then(|value| value.get("turns"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let scan = account.get("scan");
+        requests += scan
+            .and_then(|value| value.get("requests"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if account_turns == 0 {
+            continue;
+        }
+        with_data += 1;
+        turns += account_turns;
+        let pick = |key: &str| {
+            totals
+                .and_then(|value| value.get(key))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+        };
+        input += pick("inputTokens");
+        output += pick("outputTokens");
+        cache_read += pick("cacheReadTokens");
+        cache_write += pick("cacheWriteTokens");
+        credits += pick("credits");
+    }
+
+    json!({
+        "accounts": accounts,
+        "aggregate": {
+            "accountCount": with_data,
+            "turns": turns,
+            "inputTokens": credits::round2(input),
+            "outputTokens": credits::round2(output),
+            "cacheReadTokens": credits::round2(cache_read),
+            "cacheWriteTokens": credits::round2(cache_write),
+            "totalTokens": credits::round2(input + output),
+            "credits": credits::round2(credits),
+            "requests": requests,
+        },
+        "errors": errors,
+        "scan": { "days": days },
+        // 口径声明：官方 token 无时间维度，日期由**消息创建时间**本地归档。
+        "note": "口径：Trae 官方 agent 域逐轮用量（含 IDE 内直接对话，不经过本机网关）；按会话消息时间归档，非上游逐日口径。",
+    })
+}
+
 /// 新增账号（手动粘贴 JWT；默认变体，兼容壳）。
 pub fn add_account(name: &str, jwt_value: &str, group_id: Option<&str>) -> Result<Value, String> {
     add_account_for(TraeVariant::default(), name, jwt_value, group_id)
@@ -1381,5 +1506,46 @@ mod tests {
         assert_eq!(value["aggregate"]["accountCount"], 0);
         assert_eq!(value["aggregate"]["consumptionRatio"], Value::Null);
         assert_eq!(value["errors"].as_array().map(Vec::len), Some(1));
+    }
+
+    /// token 聚合：只累加**有轮次**的账号；无数据的账号不进 `accountCount`，但请求数照记。
+    #[test]
+    fn official_tokens_aggregate_skips_accounts_without_turns() {
+        let accounts = vec![
+            json!({
+                "userId": "a",
+                "totals": { "inputTokens": 300000.0, "outputTokens": 9000.0,
+                            "cacheReadTokens": 250000.0, "cacheWriteTokens": 0.0, "credits": 9.08, "turns": 2 },
+                "scan": { "requests": 5 }
+            }),
+            // 有扫描但零轮次（窗口内没有对话）——不算进 accountCount。
+            json!({
+                "userId": "b",
+                "totals": { "inputTokens": 0.0, "outputTokens": 0.0,
+                            "cacheReadTokens": 0.0, "cacheWriteTokens": 0.0, "credits": 0.0, "turns": 0 },
+                "scan": { "requests": 3 }
+            }),
+        ];
+        let value = aggregate_official_tokens(accounts, vec![], 7);
+
+        assert_eq!(value["aggregate"]["accountCount"], 1, "零轮次账号不入账");
+        assert_eq!(value["aggregate"]["turns"], 2);
+        assert_eq!(value["aggregate"]["inputTokens"], 300000.0);
+        assert_eq!(value["aggregate"]["outputTokens"], 9000.0);
+        assert_eq!(value["aggregate"]["totalTokens"], 309000.0, "总 token = 输入 + 输出");
+        assert_eq!(value["aggregate"]["credits"], 9.08);
+        assert_eq!(value["aggregate"]["requests"], 8, "请求数两个账号都算");
+        assert_eq!(value["scan"]["days"], 7);
+        assert!(value["note"].is_string());
+    }
+
+    /// 空输入不得 panic，也要给出完整骨架。
+    #[test]
+    fn official_tokens_aggregate_handles_empty_input() {
+        let value = aggregate_official_tokens(vec![], vec![json!({"userId": "x", "error": "401"})], 7);
+        assert_eq!(value["aggregate"]["accountCount"], 0);
+        assert_eq!(value["aggregate"]["totalTokens"], 0.0);
+        assert_eq!(value["errors"].as_array().map(Vec::len), Some(1));
+        assert!(value["accounts"].as_array().map(Vec::is_empty).unwrap_or(false));
     }
 }

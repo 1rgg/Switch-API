@@ -34,6 +34,8 @@ import { useT } from "@/lib/i18n";
 import type { TranslationKey } from "@/locales/zh";
 import type {
   TraeModelDailyPoint,
+  TraeOfficialTokensOverview,
+  TraeOfficialTurn,
   TraeTokenScope,
   TraeTokenStatistics,
   TraeUnsupported,
@@ -195,6 +197,18 @@ export default function TraeTokenStatsPage() {
     refresh,
   } = useCachedResource<TraeTokenStatistics>(`trae:token-stats:${days}:${scope}`, load);
 
+  /**
+   * **官方** token 用量（另一条独立链路：agent 域的会话 API）。
+   *
+   * 与上方 `stats` 刻意分开取：它的数据源、刷新代价、失败模式都不同
+   * （要打多轮上游请求），因此**失败/慢不能拖垮本页**，单独一个快照。
+   */
+  const {
+    data: official,
+    loading: officialLoading,
+    refresh: refreshOfficial,
+  } = useCachedResource<TraeOfficialTokensOverview>("trae:official-tokens", api.getTraeOfficialTokens);
+
   const summary = stats?.summary;
   const daily = useMemo(
     () => (stats?.daily ?? []).filter((point) => (point.records ?? 0) > 0),
@@ -303,6 +317,14 @@ export default function TraeTokenStatsPage() {
           )}
         </AlertDescription>
       </Alert>
+
+      {/* ---- 官方 Token 用量（agent 域会话 API；含 IDE 内直接对话） ----
+              与下方「网关日志」是**两条独立链路**，故各带自己的边界说明。 */}
+      <OfficialTokenSection
+        data={official}
+        loading={officialLoading}
+        onRefresh={() => void refreshOfficial()}
+      />
 
       {/* ---- 版本范围条：四档筛选（国内版 / 国际版 / 未标注 / 全部），
               计数来自 variantCounts（只受时间窗口影响） ---- */}
@@ -591,6 +613,243 @@ export default function TraeTokenStatsPage() {
       )}
     </div>
   );
+}
+
+/**
+ * **官方 Token 用量**区块（数据源：agent 域会话 API，与本页其它区块**不同源**）。
+ *
+ * ## 为什么必须单独一块、而且写在最上面
+ *
+ * 本页原来的数据源只有**本机网关请求日志** —— 「在 IDE 里直接对话」的 token
+ * 一条都统计不到。本区块把那一块补上（官方口径），因此两者必须**并排可见**，
+ * 用户才能看出「网关 3 万 + 官方 300 万」不是矛盾，而是两条链路。
+ *
+ * ⚠️ 它需要多轮上游请求，所以有扫描上限：`scan.truncated` 为真时要显式提示，
+ * 不能让用户以为那是全部历史。
+ */
+function OfficialTokenSection({
+  data,
+  loading,
+  onRefresh,
+}: {
+  data: TraeOfficialTokensOverview | undefined;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const t = useT();
+  const aggregate = data?.aggregate;
+  const accounts = data?.accounts ?? [];
+
+  return (
+    <Card className="mb-6 min-w-0 gap-0 py-0">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border/60 px-5 py-3">
+        <span className="text-[13px] font-medium">{t("trae.stats.token.official.title")}</span>
+        <div className="flex items-center gap-3">
+          {data && (
+            <span className="text-xs text-muted-foreground">
+              {t("trae.stats.token.official.scanNote", {
+                days: data.scan.days,
+                requests: formatExact(aggregate?.requests),
+              })}
+            </span>
+          )}
+          <Button variant="ghost" size="sm" disabled={loading} onClick={onRefresh}>
+            {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {t("trae.stats.token.official.refresh")}
+          </Button>
+        </div>
+      </div>
+
+      {loading && !data ? (
+        <div className="p-4">
+          <Skeleton className="h-32 w-full" />
+        </div>
+      ) : !data ? (
+        <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+          {t("trae.stats.token.official.empty")}
+        </div>
+      ) : (
+        <>
+          <div className="px-5 py-3">
+            <p className="text-xs leading-5 text-muted-foreground">{data.note}</p>
+            {data.scan && aggregate && aggregate.requests === 0 && (
+              <p className="mt-1 text-xs text-amber-600">{t("trae.stats.token.official.noRequests")}</p>
+            )}
+          </div>
+
+          <div className="grid min-w-0 grid-cols-1 divide-y divide-border/60 border-y border-border/60 p-0 sm:grid-cols-4 sm:divide-y-0 sm:py-5">
+            <StatMetric
+              icon={Coins}
+              label={t("trae.stats.token.official.metric.total")}
+              value={formatTokens(aggregate?.totalTokens)}
+              hint={t("trae.stats.token.official.metric.totalHint", {
+                input: formatTokens(aggregate?.inputTokens),
+                output: formatTokens(aggregate?.outputTokens),
+              })}
+            />
+            <StatMetric
+              icon={ArrowDownToLine}
+              label={t("trae.stats.token.official.metric.input")}
+              value={formatTokens(aggregate?.inputTokens)}
+              hint={t("trae.stats.token.official.metric.cacheHint", {
+                cache: formatTokens(aggregate?.cacheReadTokens),
+              })}
+              divided
+            />
+            <StatMetric
+              icon={ArrowUpFromLine}
+              label={t("trae.stats.token.official.metric.output")}
+              value={formatTokens(aggregate?.outputTokens)}
+              divided
+            />
+            <StatMetric
+              icon={Server}
+              label={t("trae.stats.token.official.metric.turns")}
+              value={formatExact(aggregate?.turns)}
+              hint={t("trae.stats.token.official.metric.turnsHint", {
+                accounts: formatExact(aggregate?.accountCount),
+              })}
+              divided
+            />
+          </div>
+
+          {accounts.map((account) => (
+            <div key={account.userId} className="border-b border-border/60 last:border-b-0">
+              <div className="flex flex-wrap items-center gap-3 px-5 py-3">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  {account.accountName}
+                </span>
+                <span className="font-mono text-xs text-muted-foreground">{account.userId}</span>
+                {account.scan.truncated && (
+                  <Badge variant="secondary" className="shrink-0">
+                    {t("trae.stats.token.official.truncated")}
+                  </Badge>
+                )}
+                <span className="w-24 text-right text-xs font-medium tabular-nums">
+                  {formatTokens(account.totals.totalTokens)}
+                </span>
+              </div>
+
+              {/* 按模型 */}
+              {account.models.length > 0 && (
+                <div className="px-5 pb-3">
+                  <div className="mb-1.5 text-xs text-muted-foreground">
+                    {t("trae.stats.token.official.byModel")}
+                  </div>
+                  <div className="divide-y divide-border/60 rounded-lg border border-border/60">
+                    {account.models.map((model) => (
+                      <div key={model.model} className="flex flex-wrap items-center gap-3 px-3 py-2">
+                        <code className="min-w-0 flex-1 truncate font-mono text-xs">{model.model}</code>
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {t("trae.stats.token.official.turnsShort", {
+                            count: formatExact(model.turns),
+                          })}
+                        </span>
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {formatTokens(model.inputTokens)} / {formatTokens(model.outputTokens)}
+                        </span>
+                        <span className="w-20 text-right text-xs font-medium tabular-nums">
+                          {formatTokens(model.totalTokens)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 最近轮次 */}
+              {account.recent.length > 0 && (
+                <div className="px-5 pb-4">
+                  <div className="mb-1.5 text-xs text-muted-foreground">
+                    {t("trae.stats.token.official.recent")}
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[640px] text-sm">
+                      <thead className="bg-muted/50 text-xs text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium">
+                            {t("trae.stats.token.official.col.preview")}
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium">
+                            {t("trae.stats.token.official.col.model")}
+                          </th>
+                          <th className="px-3 py-2 text-right font-medium">
+                            {t("trae.stats.token.official.col.input")}
+                          </th>
+                          <th className="px-3 py-2 text-right font-medium">
+                            {t("trae.stats.token.official.col.output")}
+                          </th>
+                          <th className="px-3 py-2 text-right font-medium">
+                            {t("trae.stats.token.official.col.total")}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/60">
+                        {account.recent.slice(0, 20).map((turn) => (
+                          <tr key={turn.messageId}>
+                            <td className="max-w-[280px] px-3 py-2">
+                              <div className="truncate text-xs" title={turn.preview ?? ""}>
+                                {turn.preview ?? t("trae.stats.token.official.noPreview")}
+                              </div>
+                              <div className="text-[11px] text-muted-foreground">
+                                {formatTurnTime(turn)}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className="text-xs text-muted-foreground">
+                                {turn.model ?? "—"}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-xs">
+                              {formatTokens(turn.inputTokens)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-xs">
+                              {formatTokens(turn.outputTokens)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-xs font-medium">
+                              {formatTokens(turn.totalTokens)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {account.errors.length > 0 && (
+                <div className="px-5 pb-3 text-xs leading-5 text-muted-foreground">
+                  {account.errors.slice(0, 5).map((message) => (
+                    <div key={message} className="truncate" title={message}>
+                      {message}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {(data.errors?.length ?? 0) > 0 && (
+            <div className="px-5 pb-4 text-xs leading-5 text-amber-600">
+              {data.errors.slice(0, 5).map((item) => (
+                <div key={item.userId} className="truncate">
+                  <span className="font-mono">{item.userId}</span> {item.error}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+/** 轮次时间：`MM-DD HH:mm`（本地时区）。 */
+function formatTurnTime(turn: TraeOfficialTurn): string {
+  if (!turn.at) return "—";
+  const date = new Date(turn.at);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 /**
